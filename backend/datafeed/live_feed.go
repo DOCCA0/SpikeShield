@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
+	"spikeshield/db"
+	"spikeshield/utils"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"spikeshield/db"
-	"spikeshield/utils"
 )
 
 // LiveFeed fetches real-time price data from Chainlink Oracle
@@ -109,10 +112,14 @@ func (lf *LiveFeed) fetchAndStore() error {
 }
 
 // parseABI is a helper to parse the aggregator ABI
-func parseABI() *bind.MetaData {
-	// For simplicity in MVP, we'll use a simplified approach
-	// In production, you would use abigen to generate Go bindings
-	return nil
+func parseABI() abi.ABI {
+	// Chainlink Aggregator V3 Interface ABI for latestRoundData
+	abiJSON := `[{"inputs":[],"name":"latestRoundData","outputs":[{"internalType":"uint80","name":"roundId","type":"uint80"},{"internalType":"int256","name":"answer","type":"int256"},{"internalType":"uint256","name":"startedAt","type":"uint256"},{"internalType":"uint256","name":"updatedAt","type":"uint256"},{"internalType":"uint80","name":"answeredInRound","type":"uint80"}],"stateMutability":"view","type":"function"}]`
+	parsed, err := abi.JSON(strings.NewReader(abiJSON))
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse ABI: %v", err))
+	}
+	return parsed
 }
 
 // Close closes the client connection

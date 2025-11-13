@@ -137,7 +137,7 @@ github.com/ethereum/go-ethereum v1.13.0 // For contract interaction
 
 ```bash
 # Set up database
-psql -U postgres -f db/schema.sql
+docker exec -i spikeshield-db psql -U postgres -d spikeshield < db/schema.sql
 
 # Run the service
 go run main.go

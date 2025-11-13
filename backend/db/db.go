@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
 	"spikeshield/utils"
+
+	_ "github.com/lib/pq"
 )
 
 var DB *sql.DB
@@ -99,7 +100,7 @@ func InsertSpike(s *Spike) error {
 func GetLatestPrice(symbol string) (*PriceData, error) {
 	query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
 			  FROM prices WHERE symbol = $1 ORDER BY timestamp DESC LIMIT 1`
-	
+
 	p := &PriceData{}
 	err := DB.QueryRow(query, symbol).Scan(&p.ID, &p.Timestamp, &p.Symbol, &p.Open, &p.High, &p.Low, &p.Close, &p.Volume)
 	if err != nil {
@@ -112,7 +113,7 @@ func GetLatestPrice(symbol string) (*PriceData, error) {
 func GetPricesBetween(symbol string, start, end time.Time) ([]*PriceData, error) {
 	query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
 			  FROM prices WHERE symbol = $1 AND timestamp BETWEEN $2 AND $3 ORDER BY timestamp`
-	
+
 	rows, err := DB.Query(query, symbol, start, end)
 	if err != nil {
 		return nil, err
@@ -134,7 +135,7 @@ func GetPricesBetween(symbol string, start, end time.Time) ([]*PriceData, error)
 func GetActivePolicies() ([]*Policy, error) {
 	query := `SELECT id, user_address, premium, coverage_amount, purchase_time, expiry_time, status, COALESCE(tx_hash, '') 
 			  FROM policies WHERE status = 'active' AND expiry_time > NOW()`
-	
+
 	rows, err := DB.Query(query)
 	if err != nil {
 		return nil, err
@@ -171,4 +172,101 @@ func Close() {
 	if DB != nil {
 		DB.Close()
 	}
+}
+
+// GetRecentSpikes retrieves recent spike detection events
+func GetRecentSpikes(limit int) ([]*Spike, error) {
+	query := `SELECT id, timestamp, symbol, price_before, price_after, drop_percent, detected_at 
+			  FROM spikes ORDER BY detected_at DESC LIMIT $1`
+
+	rows, err := DB.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var spikes []*Spike
+	for rows.Next() {
+		s := &Spike{}
+		if err := rows.Scan(&s.ID, &s.Timestamp, &s.Symbol, &s.PriceBefore, &s.PriceAfter, &s.DropPercent, &s.DetectedAt); err != nil {
+			return nil, err
+		}
+		spikes = append(spikes, s)
+	}
+	return spikes, nil
+}
+
+// GetRecentPrices retrieves recent price data
+func GetRecentPrices(symbol string, limit int) ([]*PriceData, error) {
+	query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
+			  FROM prices WHERE symbol = $1 ORDER BY timestamp DESC LIMIT $2`
+
+	rows, err := DB.Query(query, symbol, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prices []*PriceData
+	for rows.Next() {
+		p := &PriceData{}
+		if err := rows.Scan(&p.ID, &p.Timestamp, &p.Symbol, &p.Open, &p.High, &p.Low, &p.Close, &p.Volume); err != nil {
+			return nil, err
+		}
+		prices = append(prices, p)
+	}
+	return prices, nil
+}
+
+// GetRecentPayouts retrieves recent payout records
+func GetRecentPayouts(limit int) ([]*Payout, error) {
+	query := `SELECT id, policy_id, user_address, amount, spike_id, COALESCE(tx_hash, ''), executed_at 
+			  FROM payouts ORDER BY executed_at DESC LIMIT $1`
+
+	rows, err := DB.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var payouts []*Payout
+	for rows.Next() {
+		p := &Payout{}
+		if err := rows.Scan(&p.ID, &p.PolicyID, &p.UserAddress, &p.Amount, &p.SpikeID, &p.TxHash, &p.ExecutedAt); err != nil {
+			return nil, err
+		}
+		payouts = append(payouts, p)
+	}
+	return payouts, nil
+}
+
+// SystemStats represents system statistics
+type SystemStats struct {
+	TotalSpikes    int `json:"total_spikes"`
+	TotalPayouts   int `json:"total_payouts"`
+	TotalPolicies  int `json:"total_policies"`
+	ActivePolicies int `json:"active_policies"`
+	TotalPrices    int `json:"total_prices"`
+}
+
+// GetSystemStats retrieves system statistics
+func GetSystemStats() (*SystemStats, error) {
+	stats := &SystemStats{}
+
+	// Count spikes
+	DB.QueryRow("SELECT COUNT(*) FROM spikes").Scan(&stats.TotalSpikes)
+
+	// Count payouts
+	DB.QueryRow("SELECT COUNT(*) FROM payouts").Scan(&stats.TotalPayouts)
+
+	// Count total policies
+	DB.QueryRow("SELECT COUNT(*) FROM policies").Scan(&stats.TotalPolicies)
+
+	// Count active policies
+	DB.QueryRow("SELECT COUNT(*) FROM policies WHERE status = 'active' AND expiry_time > NOW()").Scan(&stats.ActivePolicies)
+
+	// Count price records
+	DB.QueryRow("SELECT COUNT(*) FROM prices").Scan(&stats.TotalPrices)
+
+	return stats, nil
 }

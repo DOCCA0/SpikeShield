@@ -7,13 +7,14 @@ import (
 	"math/big"
 	"time"
 
+	"spikeshield/contracts"
+	"spikeshield/db"
+	"spikeshield/utils"
+
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"spikeshield/contracts"
-	"spikeshield/db"
-	"spikeshield/utils"
 )
 
 // PayoutService handles on-chain payout executions
@@ -43,7 +44,7 @@ func NewPayoutService(rpcURL, contractAddr, privateKeyHex string) (*PayoutServic
 	}
 
 	contractAddress := common.HexToAddress(contractAddr)
-	
+
 	// Create contract instance
 	insuranceContract, err := contracts.NewInsurancePool(contractAddress, client)
 	if err != nil {
@@ -54,7 +55,7 @@ func NewPayoutService(rpcURL, contractAddr, privateKeyHex string) (*PayoutServic
 	oracleAddr := crypto.PubkeyToAddress(privateKey.PublicKey)
 	currentOracle, err := insuranceContract.Oracle(&bind.CallOpts{})
 	if err != nil {
-		utils.LogWarning("Could not verify oracle address: %v", err)
+		utils.LogError("Could not verify oracle address: %v", err)
 	} else if currentOracle != oracleAddr {
 		return nil, fmt.Errorf("private key does not match contract oracle. Expected: %s, Got: %s", currentOracle.Hex(), oracleAddr.Hex())
 	}
@@ -113,7 +114,7 @@ func (ps *PayoutService) executeForPolicy(policy *db.Policy, spike *db.Spike) er
 		return fmt.Errorf("failed to get public key")
 	}
 	fromAddress := crypto.PubkeyToAddress(*publicKeyECDSA)
-	
+
 	nonce, err := ps.Client.PendingNonceAt(context.Background(), fromAddress)
 	if err != nil {
 		return fmt.Errorf("failed to get nonce: %w", err)
@@ -122,7 +123,7 @@ func (ps *PayoutService) executeForPolicy(policy *db.Policy, spike *db.Spike) er
 
 	// Set gas parameters
 	auth.GasLimit = uint64(300000) // Increase if needed
-	
+
 	// Get suggested gas price
 	gasPrice, err := ps.Client.SuggestGasPrice(context.Background())
 	if err != nil {
@@ -150,7 +151,7 @@ func (ps *PayoutService) executeForPolicy(policy *db.Policy, spike *db.Spike) er
 	// Wait for transaction to be mined
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	
+
 	receipt, err := bind.WaitMined(ctx, ps.Client, tx)
 	if err != nil {
 		return fmt.Errorf("failed to wait for transaction: %w", err)
@@ -193,4 +194,3 @@ func (ps *PayoutService) Close() {
 		ps.Client.Close()
 	}
 }
-

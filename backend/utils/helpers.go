@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -41,13 +42,19 @@ var AppConfig *Config
 
 // LoadConfig loads configuration from YAML file
 func LoadConfig(path string) (*Config, error) {
+	// Load .env file if it exists
+	_ = godotenv.Load(".env")
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	// Expand environment variables in the YAML content
+	expandedData := os.ExpandEnv(string(data))
+
 	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	if err := yaml.Unmarshal([]byte(expandedData), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 

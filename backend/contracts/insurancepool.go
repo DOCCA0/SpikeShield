@@ -59,15 +59,8 @@ func bindInsurancePool(address common.Address, caller bind.ContractCaller, trans
 // ExecutePayout is a paid mutator transaction binding the contract method 0x9af1d35a.
 //
 // Solidity: function executePayout(address user, uint256 policyId) returns()
-func (_InsurancePool *InsurancePoolTransactor) ExecutePayout(opts *bind.TransactOpts, user common.Address, policyId *big.Int) (*types.Transaction, error) {
-	return _InsurancePool.contract.Transact(opts, "executePayout", user, policyId)
-}
-
-// ExecutePayout is a paid mutator transaction binding the contract method 0x9af1d35a.
-//
-// Solidity: function executePayout(address user, uint256 policyId) returns()
 func (_InsurancePool *InsurancePool) ExecutePayout(opts *bind.TransactOpts, user common.Address, policyId *big.Int) (*types.Transaction, error) {
-	return _InsurancePool.contract.Transact(opts, "executePayout", user, policyId)
+	return _InsurancePool.InsurancePoolTransactor.contract.Transact(opts, "executePayout", user, policyId)
 }
 
 // GetPoolBalance is a free data retrieval call binding the contract method 0x4550e706.

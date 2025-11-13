@@ -23,6 +23,7 @@ func main() {
 	startTime := flag.String("start", "", "Start time for replay mode (e.g., 2021-05-19T00:00:00)")
 	endTime := flag.String("end", "", "End time for replay mode (e.g., 2021-05-19T01:00:00)")
 	configPath := flag.String("config", "config.yaml", "Path to config file")
+	apiPort := flag.String("api-port", "8080", "API server port")
 	flag.Parse()
 
 	utils.LogInfo("🚀 SpikeShield Starting...")
@@ -41,6 +42,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Start API server in background
+	apiServer := api.NewServer(":" + *apiPort)
+	go func() {
+		if err := apiServer.Start(); err != nil {
+			utils.LogError("API server error: %v", err)
+		}
+	}()
 
 	// Create detector
 	det := detector.NewDetector(*symbol, config.Detector.ThresholdPercent, config.Detector.WindowMinutes)
@@ -119,7 +128,7 @@ func runReplayMode(symbol, startStr, endStr string, det *detector.Detector, call
 
 	// Load CSV data
 	csvPath := fmt.Sprintf("../data/%s_%s.csv", symbol, start.Format("2006-01-02"))
-	
+
 	// Check if file exists, otherwise use default
 	if _, err := os.Stat(csvPath); os.IsNotExist(err) {
 		csvPath = "../data/btcusdt_2021-05-19.csv"

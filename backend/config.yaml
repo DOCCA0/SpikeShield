@@ -8,12 +8,13 @@ database:
 rpc:
   url: https://ethereum-sepolia-rpc.publicnode.com
   contract_address: "0xbe4636f196f5a081074EBE435E82D38C9991F49D"
-  private_key: "your_private_key_here"
+  private_key: "${PRIVATE_KEY}"
 
 detector:
-  # Threshold for spike detection (percentage drop)
+  # Threshold for wick detection (percentage depth of lower shadow)
+  # A wick is a flash crash where price drops sharply but recovers quickly
   threshold_percent: 10.0
-  # Time window for comparison (minutes)
+  # Time window is not used for wick detection (kept for compatibility)
   window_minutes: 5
 
 chainlink:
