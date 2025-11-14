@@ -8,26 +8,26 @@ import (
 	"spikeshield/utils"
 )
 
-// Detector monitors price changes and detects wicks (flash crashes)
+// Detector monitors price changes and detects spikes (long wicks)
 type Detector struct {
-	ThresholdPercent float64 // Minimum wick depth percentage
-	WindowMinutes    int     // Time window to check for recovery
+	ThresholdPercent float64 // Minimum range percentage for spike detection
+	BodyRatioMax     float64 // Maximum body/range ratio (smaller = longer wick)
 	Symbol           string
 }
 
 // NewDetector creates a new detector instance
-func NewDetector(symbol string, thresholdPercent float64, windowMinutes int) *Detector {
+func NewDetector(symbol string, thresholdPercent float64, bodyRatioMax float64) *Detector {
 	return &Detector{
 		ThresholdPercent: thresholdPercent,
-		WindowMinutes:    windowMinutes,
+		BodyRatioMax:     bodyRatioMax,
 		Symbol:           symbol,
 	}
 }
 
-// CheckForSpike analyzes recent prices and detects if a wick (flash crash) occurred
-// A wick is characterized by:
-// 1. Rapid price drop (low is significantly below open/close)
-// 2. Price recovers quickly (close is near the open)
+// CheckForSpike analyzes recent prices and detects if a spike (long wick) occurred
+// A spike is characterized by:
+// 1. Small body: abs(open-close)/(high-low) <= body_ratio_max (default 0.3)
+// 2. Large range: (high-low)/close >= threshold_percent (default 0.1 = 10%)
 func (d *Detector) CheckForSpike() (*db.Spike, error) {
 	// Get latest price
 	latest, err := db.GetLatestPrice(d.Symbol)
@@ -35,31 +35,29 @@ func (d *Detector) CheckForSpike() (*db.Spike, error) {
 		return nil, fmt.Errorf("failed to get latest price: %w", err)
 	}
 
-	// Check if this candle has a significant lower wick
-	// Wick is the difference between the low and the higher of open/close
-	closeOrOpen := latest.Close
-	if latest.Open > latest.Close {
-		closeOrOpen = latest.Open // Use open if it's higher (red candle)
+	// Calculate body size relative to total range
+	bodySize := abs(latest.Open - latest.Close)
+	totalRange := latest.High - latest.Low
+
+	// Avoid division by zero
+	if totalRange == 0 || latest.Close == 0 {
+		return nil, nil
 	}
 
-	// Calculate wick depth as percentage
-	wickDepth := ((closeOrOpen - latest.Low) / closeOrOpen) * 100
+	bodyRatio := bodySize / totalRange      // Small body means long wick
+	rangeRatio := totalRange / latest.Close // Range as ratio of close
 
-	// Also check if price recovered (close is near open, within 2%)
-	bodySize := abs(latest.Close - latest.Open)
-	priceRecovered := (bodySize / latest.Open) < 0.02 // Body is less than 2% of open price
+	utils.LogDebug("Spike check: open=$%.2f, high=$%.2f, low=$%.2f, close=$%.2f, bodyRatio=%.4f, rangeRatio=%.4f",
+		latest.Open, latest.High, latest.Low, latest.Close, bodyRatio, rangeRatio)
 
-	utils.LogDebug("Wick check: open=$%.2f, high=$%.2f, low=$%.2f, close=$%.2f, wick=%.2f%%, recovered=%v",
-		latest.Open, latest.High, latest.Low, latest.Close, wickDepth, priceRecovered)
-
-	// Detect wick: significant depth AND price recovered
-	if wickDepth >= d.ThresholdPercent && priceRecovered {
+	// Detect spike: small body (< bodyRatioMax) AND large range (>= threshold)
+	if bodyRatio <= d.BodyRatioMax && rangeRatio >= d.ThresholdPercent {
 		spike := &db.Spike{
 			Timestamp:   latest.Timestamp,
 			Symbol:      d.Symbol,
-			PriceBefore: closeOrOpen,
-			PriceAfter:  latest.Low,
-			DropPercent: wickDepth,
+			PriceBefore: latest.Open,
+			PriceAfter:  latest.High, // Record the spike high
+			DropPercent: rangeRatio * 100,
 		}
 
 		// Save spike to database
@@ -67,8 +65,8 @@ func (d *Detector) CheckForSpike() (*db.Spike, error) {
 			return nil, fmt.Errorf("failed to insert spike: %w", err)
 		}
 
-		utils.LogInfo("🚨 WICK DETECTED! %s had %.2f%% wick from $%.2f to $%.2f (recovered to $%.2f)",
-			d.Symbol, wickDepth, closeOrOpen, latest.Low, latest.Close)
+		utils.LogInfo("🚨 SPIKE DETECTED! %s had %.2f%% range (body ratio: %.2f%%) - High: $%.2f, Low: $%.2f",
+			d.Symbol, rangeRatio*100, bodyRatio*100, latest.High, latest.Low)
 
 		return spike, nil
 	}
@@ -84,9 +82,9 @@ func abs(x float64) float64 {
 	return x
 }
 
-// ContinuousMonitor runs wick detection in a loop
+// ContinuousMonitor runs spike detection in a loop
 func (d *Detector) ContinuousMonitor(checkInterval time.Duration, onSpike func(*db.Spike)) {
-	utils.LogInfo("Starting continuous wick monitoring for %s (threshold: %.2f%%)", d.Symbol, d.ThresholdPercent)
+	utils.LogInfo("Starting continuous spike monitoring for %s (threshold: %.1f%%)", d.Symbol, d.ThresholdPercent*100)
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -106,11 +104,11 @@ func (d *Detector) ContinuousMonitor(checkInterval time.Duration, onSpike func(*
 }
 
 // DetectAllInRange analyzes all price data in a time range (for replay mode)
-// Detects wicks: candles with long lower shadows where price recovered
-func (d *Detector) DetectAllInRange(start, end time.Time) ([]*db.Spike, error) {
-	utils.LogInfo("Analyzing price data for wicks from %s to %s", start.Format(time.RFC3339), end.Format(time.RFC3339))
+// Detects spikes: candles with long wicks (small body, large range)
+func (d *Detector) DetectAllInRange() ([]*db.Spike, error) {
+	utils.LogInfo("Analyzing price data for spikes for symbol %s", d.Symbol)
 
-	prices, err := db.GetPricesBetween(d.Symbol, start, end)
+	prices, err := db.GetAllPrices(d.Symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get prices: %w", err)
 	}
@@ -121,42 +119,41 @@ func (d *Detector) DetectAllInRange(start, end time.Time) ([]*db.Spike, error) {
 
 	var spikes []*db.Spike
 
-	// Scan through all candles looking for wicks
+	// Scan through all candles looking for spikes
 	for _, candle := range prices {
-		// Use the higher of open or close as reference
-		closeOrOpen := candle.Close
-		if candle.Open > candle.Close {
-			closeOrOpen = candle.Open
+		bodySize := abs(candle.Open - candle.Close)
+		totalRange := candle.High - candle.Low
+
+		// Skip if no range or invalid data
+		if totalRange == 0 || candle.Close == 0 {
+			continue
 		}
 
-		// Calculate wick depth
-		wickDepth := ((closeOrOpen - candle.Low) / closeOrOpen) * 100
+		// Calculate body ratio and range ratio
+		bodyRatio := bodySize / totalRange
+		rangeRatio := totalRange / candle.Close
 
-		// Check if price recovered (small body)
-		bodySize := abs(candle.Close - candle.Open)
-		priceRecovered := (bodySize / candle.Open) < 0.02
-
-		// Detect wick
-		if wickDepth >= d.ThresholdPercent && priceRecovered {
+		// Detect spike: small body AND large range
+		if bodyRatio <= d.BodyRatioMax && rangeRatio >= d.ThresholdPercent {
 			spike := &db.Spike{
 				Timestamp:   candle.Timestamp,
 				Symbol:      d.Symbol,
-				PriceBefore: closeOrOpen,
-				PriceAfter:  candle.Low,
-				DropPercent: wickDepth,
+				PriceBefore: candle.Open,
+				PriceAfter:  candle.High,
+				DropPercent: rangeRatio * 100,
 			}
 
 			if err := db.InsertSpike(spike); err != nil {
-				utils.LogError("Failed to insert wick: %v", err)
+				utils.LogError("Failed to insert spike: %v", err)
 				continue
 			}
 
 			spikes = append(spikes, spike)
-			utils.LogInfo("Wick detected at %s: %.2f%% wick from $%.2f to $%.2f (recovered to $%.2f)",
-				spike.Timestamp.Format(time.RFC3339), wickDepth, closeOrOpen, candle.Low, candle.Close)
+			utils.LogInfo("Spike detected at %s: %.2f%% range (body: %.2f%%) - High: $%.2f, Low: $%.2f, Close: $%.2f",
+				spike.Timestamp.Format(time.RFC3339), rangeRatio*100, bodyRatio*100, candle.High, candle.Low, candle.Close)
 		}
 	}
 
-	utils.LogInfo("Analysis complete: found %d wick(s)", len(spikes))
+	utils.LogInfo("Analysis complete: found %d spike(s)", len(spikes))
 	return spikes, nil
 }

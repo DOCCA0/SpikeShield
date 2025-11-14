@@ -12,6 +12,14 @@ import (
 
 var DB *sql.DB
 
+// InsertNotifier is a channel for notifying when new prices are inserted
+var InsertNotifier chan struct{}
+
+// InitNotifier initializes the insert notification channel
+func InitNotifier() {
+	InsertNotifier = make(chan struct{}, 100)
+}
+
 // PriceData represents a price record
 type PriceData struct {
 	ID        int
@@ -86,7 +94,18 @@ func Connect(cfg *utils.Config) error {
 func InsertPrice(p *PriceData) error {
 	query := `INSERT INTO prices (timestamp, symbol, open, high, low, close, volume) 
 			  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
-	return DB.QueryRow(query, p.Timestamp, p.Symbol, p.Open, p.High, p.Low, p.Close, p.Volume).Scan(&p.ID)
+	err := DB.QueryRow(query, p.Timestamp, p.Symbol, p.Open, p.High, p.Low, p.Close, p.Volume).Scan(&p.ID)
+
+	// Notify listeners that a new price was inserted
+	if err == nil && InsertNotifier != nil {
+		select {
+		case InsertNotifier <- struct{}{}:
+		default:
+			// Channel full, skip notification
+		}
+	}
+
+	return err
 }
 
 // InsertSpike inserts a spike detection record
@@ -109,12 +128,12 @@ func GetLatestPrice(symbol string) (*PriceData, error) {
 	return p, nil
 }
 
-// GetPricesBetween retrieves prices within a time range
-func GetPricesBetween(symbol string, start, end time.Time) ([]*PriceData, error) {
+// GetAllPrices retrieves prices within a time range
+func GetAllPrices(symbol string) ([]*PriceData, error) {
 	query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
-			  FROM prices WHERE symbol = $1 AND timestamp BETWEEN $2 AND $3 ORDER BY timestamp`
+			  FROM prices WHERE symbol = $1 ORDER BY timestamp`
 
-	rows, err := DB.Query(query, symbol, start, end)
+	rows, err := DB.Query(query, symbol)
 	if err != nil {
 		return nil, err
 	}
@@ -269,4 +288,11 @@ func GetSystemStats() (*SystemStats, error) {
 	DB.QueryRow("SELECT COUNT(*) FROM prices").Scan(&stats.TotalPrices)
 
 	return stats, nil
+}
+
+// DeleteAllPrices deletes all price records
+func DeleteAllPrices() error {
+	query := `DELETE FROM prices`
+	_, err := DB.Exec(query)
+	return err
 }

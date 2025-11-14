@@ -56,7 +56,7 @@ psql -h localhost -U postgres -d spikeshield
 **Solution:**
 ```bash
 # Check file exists
-ls -la data/btcusdt_2021-05-19.csv
+ls -la data/btcusdt_wick_test.csv
 
 # Use absolute path in config or run from correct directory
 cd backend
@@ -295,7 +295,7 @@ go mod tidy
 **Solution:**
 ```bash
 # Check CSV exists
-cat data/btcusdt_2021-05-19.csv | head
+cat data/btcusdt_wick_test.csv | head
 
 # Use correct time range (data is from 2021-05-19)
 --start "2021-05-19T00:00:00" --end "2021-05-19T03:00:00"

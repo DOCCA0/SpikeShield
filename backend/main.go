@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"spikeshield/api"
 	"spikeshield/datafeed"
@@ -20,8 +18,6 @@ func main() {
 	// Parse command line flags
 	mode := flag.String("mode", "replay", "Mode: replay or live")
 	symbol := flag.String("symbol", "BTCUSDT", "Trading symbol")
-	startTime := flag.String("start", "", "Start time for replay mode (e.g., 2021-05-19T00:00:00)")
-	endTime := flag.String("end", "", "End time for replay mode (e.g., 2021-05-19T01:00:00)")
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	apiPort := flag.String("api-port", "8080", "API server port")
 	flag.Parse()
@@ -43,6 +39,9 @@ func main() {
 	}
 	defer db.Close()
 
+	// Initialize insert notification channel
+	db.InitNotifier()
+
 	// Start API server in background
 	apiServer := api.NewServer(":" + *apiPort)
 	go func() {
@@ -52,7 +51,7 @@ func main() {
 	}()
 
 	// Create detector
-	det := detector.NewDetector(*symbol, config.Detector.ThresholdPercent, config.Detector.WindowMinutes)
+	det := detector.NewDetector(*symbol, config.Detector.ThresholdPercent, config.Detector.BodyRatioMax)
 
 	// Create payout service
 	payoutSvc, err := api.NewPayoutService(config.RPC.URL, config.RPC.ContractAddress, config.RPC.PrivateKey)
@@ -80,7 +79,7 @@ func main() {
 	// Run based on mode
 	switch *mode {
 	case "replay":
-		runReplayMode(*symbol, *startTime, *endTime, det, onSpikeDetected)
+		runReplayMode(det, onSpikeDetected)
 	case "live":
 		runLiveMode(config, *symbol, det, onSpikeDetected)
 	default:
@@ -89,73 +88,47 @@ func main() {
 	}
 }
 
-// runReplayMode processes historical data from CSV
-func runReplayMode(symbol, startStr, endStr string, det *detector.Detector, callback func(*db.Spike)) {
+// monitorDatabaseInserts listens for new rows in the database and triggers detection
+func monitorDatabaseInserts(det *detector.Detector, callback func(*db.Spike)) {
+	utils.LogInfo("👀 Monitoring database for new inserts via channel...")
+
+	// Handle shutdown signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	utils.LogInfo("Monitoring active. Press Ctrl+C to stop")
+
+	// Listen for insert notifications
+	for {
+		select {
+		case <-db.InsertNotifier:
+			utils.LogInfo("📥 New data inserted, checking for spikes...")
+			// Run detection on latest price
+			spike, err := det.CheckForSpike()
+			if err != nil {
+				utils.LogError("Detection failed: %v", err)
+				continue
+			}
+
+			// Trigger callback if spike detected
+			if spike != nil {
+				callback(spike)
+			}
+
+		case <-sigChan:
+			utils.LogInfo("Shutting down...")
+			return
+		}
+	}
+}
+
+// runReplayMode waits for external script to insert data row by row
+func runReplayMode(det *detector.Detector, callback func(*db.Spike)) {
 	utils.LogInfo("📊 Running in REPLAY mode")
+	utils.LogInfo("Waiting for external script to insert data from CSV...")
 
-	// Parse time range
-	var start, end time.Time
-	var err error
-
-	if startStr == "" {
-		// Default to a sample time range
-		start = time.Date(2021, 5, 19, 0, 0, 0, 0, time.UTC)
-	} else {
-		start, err = time.Parse(time.RFC3339, startStr)
-		if err != nil {
-			start, err = time.Parse("2006-01-02T15:04:05", startStr)
-			if err != nil {
-				utils.LogError("Failed to parse start time: %v", err)
-				os.Exit(1)
-			}
-		}
-	}
-
-	if endStr == "" {
-		end = start.Add(24 * time.Hour)
-	} else {
-		end, err = time.Parse(time.RFC3339, endStr)
-		if err != nil {
-			end, err = time.Parse("2006-01-02T15:04:05", endStr)
-			if err != nil {
-				utils.LogError("Failed to parse end time: %v", err)
-				os.Exit(1)
-			}
-		}
-	}
-
-	utils.LogInfo("Time range: %s to %s", start.Format(time.RFC3339), end.Format(time.RFC3339))
-
-	// Load CSV data
-	csvPath := fmt.Sprintf("../data/%s_%s.csv", symbol, start.Format("2006-01-02"))
-
-	// Check if file exists, otherwise use default
-	if _, err := os.Stat(csvPath); os.IsNotExist(err) {
-		csvPath = "../data/btcusdt_2021-05-19.csv"
-		utils.LogInfo("Using default CSV: %s", csvPath)
-	}
-
-	feed := datafeed.NewReplayFeed(csvPath, symbol, start, end)
-	if err := feed.LoadAndStore(); err != nil {
-		utils.LogError("Failed to load replay data: %v", err)
-		os.Exit(1)
-	}
-
-	// Run detection on loaded data
-	spikes, err := det.DetectAllInRange(start, end)
-	if err != nil {
-		utils.LogError("Detection failed: %v", err)
-		os.Exit(1)
-	}
-
-	utils.LogInfo("Detection complete: found %d spike(s)", len(spikes))
-
-	// Trigger payouts for detected spikes
-	for _, spike := range spikes {
-		callback(spike)
-	}
-
-	utils.LogInfo("✅ Replay mode completed")
+	// Just monitor database inserts (external script will feed data)
+	monitorDatabaseInserts(det, callback)
 }
 
 // runLiveMode monitors real-time price from Chainlink
@@ -179,25 +152,18 @@ func runLiveMode(config *utils.Config, symbol string, det *detector.Detector, ca
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start live feed in goroutine
+	// Start live feed in background to populate database
 	go func() {
 		if err := liveFeed.Start(ctx); err != nil {
 			utils.LogError("Live feed error: %v", err)
 		}
 	}()
 
-	// Start continuous monitoring
-	go det.ContinuousMonitor(30*time.Second, callback)
+	utils.LogInfo("Live feed started, now monitoring database...")
 
-	utils.LogInfo("Live mode running... Press Ctrl+C to stop")
+	// Monitor database inserts (same as replay mode)
+	monitorDatabaseInserts(det, callback)
 
-	// Wait for shutdown signal
-	<-sigChan
-	utils.LogInfo("Shutting down...")
+	// Cancel live feed context on exit
 	cancel()
-	time.Sleep(1 * time.Second)
 }

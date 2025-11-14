@@ -11,11 +11,10 @@ rpc:
   private_key: "${PRIVATE_KEY}"
 
 detector:
-  # Threshold for wick detection (percentage depth of lower shadow)
-  # A wick is a flash crash where price drops sharply but recovers quickly
-  threshold_percent: 10.0
-  # Time window is not used for wick detection (kept for compatibility)
-  window_minutes: 5
+  # Threshold for spike detection (minimum range as ratio of close price, 0.1 = 10%)
+  threshold_percent: 0.1
+  # Body ratio threshold (body size / total range, smaller = longer wick)
+  body_ratio_max: 0.3
 
 chainlink:
   # Chainlink price feed address for BTC/USD on Sepolia

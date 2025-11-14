@@ -127,7 +127,7 @@ SpikeShield/
 │   └── package.json
 │
 ├── data/                         # ✅ Sample data
-│   └── btcusdt_2021-05-19.csv
+│   └── btcusdt_wick_test.csv
 │
 ├── docker-compose.yml            # ✅ Docker setup
 ├── .env.example                  # ✅ Environment template

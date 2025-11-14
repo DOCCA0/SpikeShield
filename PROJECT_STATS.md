@@ -55,7 +55,7 @@
 - **Total**: ~2,520 lines of documentation
 
 ### Sample Data
-- `btcusdt_2021-05-19.csv` - 30 lines
+- `btcusdt_wick_test.csv` - 30 lines
 
 ---
 

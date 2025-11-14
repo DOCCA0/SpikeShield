@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/csv"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -53,6 +55,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/prices", s.handlePrices)
 		api.GET("/payouts", s.handlePayouts)
 		api.GET("/stats", s.handleStats)
+		api.POST("/insert_fake_kline", s.handleInsertFakeKline)
 	}
 }
 
@@ -134,5 +137,96 @@ func (s *Server) handleStats(c *gin.Context) {
 		"stats":        stats,
 		"latest_price": latestPrice,
 		"status":       "monitoring",
+	})
+}
+
+// handleInsertFakeKline inserts CSV data line by line with 1 second delay
+func (s *Server) handleInsertFakeKline(c *gin.Context) {
+	utils.LogInfo("📝 Starting fake kline insertion from CSV...")
+
+	// Run in background to avoid blocking the HTTP response
+	go func() {
+		// First, delete all existing prices
+		utils.LogInfo("🗑️  Deleting all existing prices...")
+		if err := db.DeleteAllPrices(); err != nil {
+			utils.LogError("Failed to delete prices: %v", err)
+			return
+		}
+		utils.LogInfo("✅ All prices deleted")
+
+		csvPath := "../data/btcusdt_wick_test.csv"
+		file, err := os.Open(csvPath)
+		if err != nil {
+			utils.LogError("Failed to open CSV file: %v", err)
+			return
+		}
+		defer file.Close()
+
+		reader := csv.NewReader(file)
+
+		// Read header
+		header, err := reader.Read()
+		if err != nil {
+			utils.LogError("Failed to read CSV header: %v", err)
+			return
+		}
+
+		utils.LogInfo("CSV header: %v", header)
+
+		lineCount := 0
+		for {
+			record, err := reader.Read()
+			if err != nil {
+				// End of file
+				utils.LogInfo("✅ Finished inserting %d lines from CSV", lineCount)
+				break
+			}
+
+			// Parse CSV record (timestamp, open, high, low, close, volume)
+			if len(record) < 6 {
+				utils.LogError("Invalid CSV record: %v", record)
+				continue
+			}
+
+			timestamp, err := strconv.ParseInt(record[0], 10, 64)
+			if err != nil {
+				utils.LogError("Failed to parse timestamp: %v", err)
+				continue
+			}
+
+			open, _ := strconv.ParseFloat(record[1], 64)
+			high, _ := strconv.ParseFloat(record[2], 64)
+			low, _ := strconv.ParseFloat(record[3], 64)
+			close, _ := strconv.ParseFloat(record[4], 64)
+			volume, _ := strconv.ParseFloat(record[5], 64)
+
+			// Create price data
+			priceData := &db.PriceData{
+				Timestamp: time.Unix(timestamp/1000, 0),
+				Symbol:    "BTCUSDT",
+				Open:      open,
+				High:      high,
+				Low:       low,
+				Close:     close,
+				Volume:    volume,
+			}
+
+			// Insert into database (this will trigger the channel notification)
+			if err := db.InsertPrice(priceData); err != nil {
+				utils.LogError("Failed to insert price: %v", err)
+				continue
+			}
+
+			lineCount++
+			utils.LogInfo("Inserted line %d: %s @ $%.2f", lineCount, priceData.Timestamp.Format(time.RFC3339), priceData.Close)
+
+			// Sleep 1 second before next insert
+			time.Sleep(1 * time.Second)
+		}
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "started",
+		"message": "Fake kline insertion started in background",
 	})
 }

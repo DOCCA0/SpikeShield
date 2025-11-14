@@ -20,12 +20,10 @@ type ReplayFeed struct {
 }
 
 // NewReplayFeed creates a new replay feed instance
-func NewReplayFeed(filePath, symbol string, start, end time.Time) *ReplayFeed {
+func NewReplayFeed(filePath string, symbol string) *ReplayFeed {
 	return &ReplayFeed{
 		FilePath: filePath,
 		Symbol:   symbol,
-		Start:    start,
-		End:      end,
 	}
 }
 
@@ -38,7 +36,7 @@ func (rf *ReplayFeed) LoadAndStore() error {
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	
+
 	// Skip header row
 	_, err = reader.Read()
 	if err != nil {
@@ -54,19 +52,9 @@ func (rf *ReplayFeed) LoadAndStore() error {
 			break // End of file
 		}
 
-		// Parse CSV: timestamp, open, high, low, close, volume
-		if len(record) < 6 {
-			continue
-		}
-
 		timestamp, err := parseTimestamp(record[0])
 		if err != nil {
 			utils.LogError("Failed to parse timestamp: %v", err)
-			continue
-		}
-
-		// Filter by time range
-		if timestamp.Before(rf.Start) || timestamp.After(rf.End) {
 			continue
 		}
 

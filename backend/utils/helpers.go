@@ -27,7 +27,7 @@ type Config struct {
 
 	Detector struct {
 		ThresholdPercent float64 `yaml:"threshold_percent"`
-		WindowMinutes    int     `yaml:"window_minutes"`
+		BodyRatioMax     float64 `yaml:"body_ratio_max"`
 	} `yaml:"detector"`
 
 	Chainlink struct {

@@ -139,7 +139,7 @@ go run main.go --mode replay --symbol BTCUSDT \
 - `frontend/src/components/index.js` - UI components
 
 ### Data
-- `data/btcusdt_2021-05-19.csv` - Historical price data
+- `data/btcusdt_wick_test.csv` - Historical price data
 
 ## Common Issues
 

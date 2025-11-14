@@ -52,7 +52,7 @@ spikeshield/
 │   └── package.json
 │
 ├── data/                  # Historical price data
-│   └── btcusdt_2021-05-19.csv
+│   └── btcusdt_wick_test.csv
 │
 └── docker-compose.yml     # One-command deployment
 ```
