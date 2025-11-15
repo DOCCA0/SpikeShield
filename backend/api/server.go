@@ -146,7 +146,15 @@ func (s *Server) handleInsertFakeKline(c *gin.Context) {
 
 	// Run in background to avoid blocking the HTTP response
 	go func() {
-		// First, delete all existing prices
+		// First, delete all existing spikes
+		utils.LogInfo("🗑️  Deleting all existing spikes...")
+		if err := db.DeleteAllSpikes(); err != nil {
+			utils.LogError("Failed to delete spikes: %v", err)
+			return
+		}
+		utils.LogInfo("✅ All spikes deleted")
+
+		// Then delete all existing prices
 		utils.LogInfo("🗑️  Deleting all existing prices...")
 		if err := db.DeleteAllPrices(); err != nil {
 			utils.LogError("Failed to delete prices: %v", err)
@@ -188,7 +196,8 @@ func (s *Server) handleInsertFakeKline(c *gin.Context) {
 				continue
 			}
 
-			timestamp, err := strconv.ParseInt(record[0], 10, 64)
+			// Parse timestamp (ISO 8601 format)
+			timestamp, err := time.Parse(time.RFC3339, record[0])
 			if err != nil {
 				utils.LogError("Failed to parse timestamp: %v", err)
 				continue
@@ -202,7 +211,7 @@ func (s *Server) handleInsertFakeKline(c *gin.Context) {
 
 			// Create price data
 			priceData := &db.PriceData{
-				Timestamp: time.Unix(timestamp/1000, 0),
+				Timestamp: timestamp,
 				Symbol:    "BTCUSDT",
 				Open:      open,
 				High:      high,

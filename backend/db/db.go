@@ -34,13 +34,16 @@ type PriceData struct {
 
 // Spike represents a detected spike event
 type Spike struct {
-	ID          int
-	Timestamp   time.Time
-	Symbol      string
-	PriceBefore float64
-	PriceAfter  float64
-	DropPercent float64
-	DetectedAt  time.Time
+	ID                int
+	Timestamp         time.Time
+	Symbol            string
+	Open              float64
+	High              float64
+	Low               float64
+	Close             float64
+	BodyRatio         float64
+	RangeClosePercent float64
+	DetectedAt        time.Time
 }
 
 // Policy represents an insurance policy
@@ -109,10 +112,10 @@ func InsertPrice(p *PriceData) error {
 }
 
 // InsertSpike inserts a spike detection record
-func InsertSpike(s *Spike) error {
-	query := `INSERT INTO spikes (timestamp, symbol, price_before, price_after, drop_percent) 
+func InsertSpike(s *Spike, priceID int) error {
+	query := `INSERT INTO spikes (timestamp, symbol, price_id, body_ratio, range_close_percent) 
 			  VALUES ($1, $2, $3, $4, $5) RETURNING id`
-	return DB.QueryRow(query, s.Timestamp, s.Symbol, s.PriceBefore, s.PriceAfter, s.DropPercent).Scan(&s.ID)
+	return DB.QueryRow(query, s.Timestamp, s.Symbol, priceID, s.BodyRatio, s.RangeClosePercent).Scan(&s.ID)
 }
 
 // GetLatestPrice retrieves the most recent price for a symbol
@@ -195,8 +198,11 @@ func Close() {
 
 // GetRecentSpikes retrieves recent spike detection events
 func GetRecentSpikes(limit int) ([]*Spike, error) {
-	query := `SELECT id, timestamp, symbol, price_before, price_after, drop_percent, detected_at 
-			  FROM spikes ORDER BY detected_at DESC LIMIT $1`
+	query := `SELECT s.id, s.timestamp, s.symbol, p.open, p.high, p.low, p.close, 
+			         s.body_ratio, s.range_close_percent, s.detected_at 
+			  FROM spikes s 
+			  JOIN prices p ON s.price_id = p.id 
+			  ORDER BY s.detected_at DESC LIMIT $1`
 
 	rows, err := DB.Query(query, limit)
 	if err != nil {
@@ -207,7 +213,8 @@ func GetRecentSpikes(limit int) ([]*Spike, error) {
 	var spikes []*Spike
 	for rows.Next() {
 		s := &Spike{}
-		if err := rows.Scan(&s.ID, &s.Timestamp, &s.Symbol, &s.PriceBefore, &s.PriceAfter, &s.DropPercent, &s.DetectedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Timestamp, &s.Symbol, &s.Open, &s.High, &s.Low, &s.Close,
+			&s.BodyRatio, &s.RangeClosePercent, &s.DetectedAt); err != nil {
 			return nil, err
 		}
 		spikes = append(spikes, s)
@@ -293,6 +300,13 @@ func GetSystemStats() (*SystemStats, error) {
 // DeleteAllPrices deletes all price records
 func DeleteAllPrices() error {
 	query := `DELETE FROM prices`
+	_, err := DB.Exec(query)
+	return err
+}
+
+// DeleteAllSpikes deletes all spike records
+func DeleteAllSpikes() error {
+	query := `DELETE FROM spikes`
 	_, err := DB.Exec(query)
 	return err
 }

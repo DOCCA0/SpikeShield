@@ -53,15 +53,18 @@ func (d *Detector) CheckForSpike() (*db.Spike, error) {
 	// Detect spike: small body (< bodyRatioMax) AND large range (>= threshold)
 	if bodyRatio <= d.BodyRatioMax && rangeRatio >= d.ThresholdPercent {
 		spike := &db.Spike{
-			Timestamp:   latest.Timestamp,
-			Symbol:      d.Symbol,
-			PriceBefore: latest.Open,
-			PriceAfter:  latest.High, // Record the spike high
-			DropPercent: rangeRatio * 100,
+			Timestamp:         latest.Timestamp,
+			Symbol:            d.Symbol,
+			Open:              latest.Open,
+			High:              latest.High,
+			Low:               latest.Low,
+			Close:             latest.Close,
+			BodyRatio:         bodyRatio,
+			RangeClosePercent: rangeRatio,
 		}
 
 		// Save spike to database
-		if err := db.InsertSpike(spike); err != nil {
+		if err := db.InsertSpike(spike, latest.ID); err != nil {
 			return nil, fmt.Errorf("failed to insert spike: %w", err)
 		}
 
@@ -136,14 +139,17 @@ func (d *Detector) DetectAllInRange() ([]*db.Spike, error) {
 		// Detect spike: small body AND large range
 		if bodyRatio <= d.BodyRatioMax && rangeRatio >= d.ThresholdPercent {
 			spike := &db.Spike{
-				Timestamp:   candle.Timestamp,
-				Symbol:      d.Symbol,
-				PriceBefore: candle.Open,
-				PriceAfter:  candle.High,
-				DropPercent: rangeRatio * 100,
+				Timestamp:         candle.Timestamp,
+				Symbol:            d.Symbol,
+				Open:              candle.Open,
+				High:              candle.High,
+				Low:               candle.Low,
+				Close:             candle.Close,
+				BodyRatio:         bodyRatio,
+				RangeClosePercent: rangeRatio,
 			}
 
-			if err := db.InsertSpike(spike); err != nil {
+			if err := db.InsertSpike(spike, candle.ID); err != nil {
 				utils.LogError("Failed to insert spike: %v", err)
 				continue
 			}

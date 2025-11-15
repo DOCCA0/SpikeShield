@@ -19,9 +19,9 @@ CREATE TABLE IF NOT EXISTS spikes (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP NOT NULL,
     symbol VARCHAR(20) NOT NULL,
-    price_before DECIMAL(20, 8) NOT NULL,
-    price_after DECIMAL(20, 8) NOT NULL,
-    drop_percent DECIMAL(5, 2) NOT NULL,
+    price_id INTEGER UNIQUE,
+    body_ratio DECIMAL(5, 4) NOT NULL,
+    range_close_percent DECIMAL(5, 4) NOT NULL,
     detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
