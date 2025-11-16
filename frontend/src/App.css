@@ -99,6 +99,50 @@
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
 }
 
+/* Tooltip styles */
+.tooltip {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+  color: #667eea;
+  margin-left: 5px;
+}
+
+.tooltip .tooltiptext {
+  visibility: hidden;
+  width: 280px;
+  background-color: #333;
+  color: #fff;
+  text-align: left;
+  border-radius: 8px;
+  padding: 10px;
+  position: fixed;
+  z-index: 9999;
+  transform: translate(-50%, -110%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  font-size: 0.9em;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.tooltip .tooltiptext::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: #333 transparent transparent transparent;
+}
+
+.tooltip:hover .tooltiptext {
+  visibility: visible;
+  opacity: 1;
+}
+
 .insurance-info {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));

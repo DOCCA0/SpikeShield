@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './App.css';
 import { useContract } from './hooks/useContract';
 import { apiService } from './services/api';
+import PriceChart from './components/PriceChart';
 
 function App() {
   const {
@@ -53,7 +54,7 @@ function App() {
     try {
       const [spikesData, pricesData, payoutsData, statsData] = await Promise.all([
         apiService.getSpikes(10),
-        apiService.getPrices('BTCUSDT', 20),
+        apiService.getPrices('BTCUSDT', 100),
         apiService.getPayouts(10),
         apiService.getStats()
       ]);
@@ -224,8 +225,32 @@ function App() {
                 <div className="value">24 Hours</div>
               </div>
               <div className="info-card">
-                <h3>Threshold</h3>
-                <div className="value">10% Drop</div>
+                <h3>
+                  Body Ratio 
+                  <span className="tooltip">
+                    ❓
+                    <span className="tooltiptext">
+                      Maximum ratio of candle body size to total range.<br/>
+                      Formula: |open-close| / (high-low)<br/>
+                      Smaller value = longer wick
+                    </span>
+                  </span>
+                </h3>
+                <div className="value">≤ 30%</div>
+              </div>
+              <div className="info-card">
+                <h3>
+                  Range Ratio 
+                  <span className="tooltip">
+                    ❓
+                    <span className="tooltiptext">
+                      Minimum ratio of price range to close price.<br/>
+                      Formula: (high-low) / close<br/>
+                      Larger value = bigger price swing
+                    </span>
+                  </span>
+                </h3>
+                <div className="value">≥ 10%</div>
               </div>
             </div>
 
@@ -234,7 +259,9 @@ function App() {
               <ul className="feature-list">
                 <li>💰 Pay 10 USDT premium to get 100 USDT coverage</li>
                 <li>⏱️ Protection valid for 24 hours</li>
-                <li>📉 If BTC price drops ≥10% within 5 minutes, automatic payout</li>
+                <li>📊 <strong>Body Ratio</strong>: abs(open-close)/(high-low) ≤ 0.3 (small body = long wick)</li>
+                <li>📈 <strong>Range Ratio</strong>: (high-low)/close ≥ 0.1 (large price range)</li>
+                <li>🚨 When both conditions met, automatic payout triggered</li>
                 <li>⚡ Backend monitors price in real-time or replay mode</li>
                 <li>🤖 Smart contract executes payout automatically</li>
               </ul>
@@ -424,36 +451,46 @@ function App() {
                   <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
                     <th style={{ padding: '12px', textAlign: 'left' }}>Time</th>
                     <th style={{ padding: '12px', textAlign: 'left' }}>Symbol</th>
-                    <th style={{ padding: '12px', textAlign: 'right' }}>Before</th>
-                    <th style={{ padding: '12px', textAlign: 'right' }}>After</th>
-                    <th style={{ padding: '12px', textAlign: 'right' }}>Drop %</th>
+                    <th style={{ padding: '12px', textAlign: 'right' }}>
+                      Body Ratio 
+                      <span className="tooltip" style={{ marginLeft: '5px' }}>
+                        ❓
+                        <span className="tooltiptext">|open-close| / (high-low)</span>
+                      </span>
+                    </th>
+                    <th style={{ padding: '12px', textAlign: 'right' }}>
+                      Range Ratio 
+                      <span className="tooltip" style={{ marginLeft: '5px' }}>
+                        ❓
+                        <span className="tooltiptext">(high-low) / close</span>
+                      </span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {spikes.slice(0, 5).map((spike, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '12px' }}>
-                        {new Date(spike.timestamp).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '12px' }}>{spike.symbol}</td>
-                      <td style={{ padding: '12px', textAlign: 'right' }}>
-                        ${spike.price_before?.toFixed(2)}
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'right' }}>
-                        ${spike.price_after?.toFixed(2)}
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'right', color: '#f56565', fontWeight: 'bold' }}>
-                        -{spike.drop_percent?.toFixed(2)}%
-                      </td>
-                    </tr>
-                  ))}
+                  {spikes.slice(0, 5).map((spike, idx) => {
+                    return (
+                      <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '12px' }}>
+                          {new Date(spike.Timestamp).toLocaleString()}
+                        </td>
+                        <td style={{ padding: '12px' }}>{spike.Symbol}</td>
+                        <td style={{ padding: '12px', textAlign: 'right', color: '#667eea', fontWeight: 'bold' }}>
+                          {(spike.BodyRatio * 100)?.toFixed(2)}%
+                        </td>
+                        <td style={{ padding: '12px', textAlign: 'right', color: '#f56565', fontWeight: 'bold' }}>
+                          {(spike.RangeClosePercent * 100)?.toFixed(2)}%
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
         )}
 
-        {/* Recent Prices */}
+        {/* Recent Prices - K-line Chart */}
         {apiStatus === 'online' && prices.length > 0 && (
           <div style={{ 
             background: 'rgba(255, 255, 255, 0.95)', 
@@ -462,32 +499,7 @@ function App() {
             marginTop: '20px'
           }}>
             <h2>📈 Recent Price Data</h2>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '15px' }}>
-                <thead>
-                  <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                    <th style={{ padding: '12px', textAlign: 'left' }}>Time</th>
-                    <th style={{ padding: '12px', textAlign: 'right' }}>Open</th>
-                    <th style={{ padding: '12px', textAlign: 'right' }}>High</th>
-                    <th style={{ padding: '12px', textAlign: 'right' }}>Low</th>
-                    <th style={{ padding: '12px', textAlign: 'right' }}>Close</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prices.slice(0, 10).map((price, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '12px' }}>
-                        {new Date(price.timestamp).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '12px', textAlign: 'right' }}>${price.open?.toFixed(2)}</td>
-                      <td style={{ padding: '12px', textAlign: 'right' }}>${price.high?.toFixed(2)}</td>
-                      <td style={{ padding: '12px', textAlign: 'right' }}>${price.low?.toFixed(2)}</td>
-                      <td style={{ padding: '12px', textAlign: 'right' }}>${price.close?.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <PriceChart prices={prices} />
           </div>
         )}
 
