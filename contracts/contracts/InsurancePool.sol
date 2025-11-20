@@ -2,20 +2,21 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @title InsurancePool
- * @dev Manages spike insurance purchases and payouts
+ * @dev Manages spike insurance purchases and payouts (Upgradeable)
  */
-contract InsurancePool is Ownable, ReentrancyGuard {
+contract InsurancePool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
     IERC20 public usdt;
     
     // Insurance policy parameters
-    uint256 public premiumAmount = 10 * 10**6; // 10 USDT (6 decimals)
-    uint256 public coverageAmount = 100 * 10**6; // 100 USDT payout
-    uint256 public coverageDuration = 24 hours; // Policy valid for 24 hours
+    uint256 public premiumAmount;
+    uint256 public coverageAmount;
+    uint256 public coverageDuration;
     
     struct Policy {
         address user;
@@ -38,9 +39,23 @@ contract InsurancePool is Ownable, ReentrancyGuard {
     event PayoutExecuted(address indexed user, uint256 policyId, uint256 amount);
     event OracleUpdated(address indexed newOracle);
     
-    constructor(address _usdt) Ownable(msg.sender) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+    
+    /**
+     * @dev Initialize the contract (replaces constructor for upgradeable contracts)
+     */
+    function initialize(address _usdt) public initializer {
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        
         usdt = IERC20(_usdt);
-        oracle = msg.sender; // Initially set deployer as oracle
+        oracle = msg.sender;
+        premiumAmount = 10 * 10**6; // 10 USDT (6 decimals)
+        coverageAmount = 100 * 10**6; // 100 USDT payout
+        coverageDuration = 24 hours; // Policy valid for 24 hours
     }
     
     /**
@@ -117,6 +132,25 @@ contract InsurancePool is Ownable, ReentrancyGuard {
             }
         }
         return false;
+    }
+    
+    /**
+     * @dev Get all policies for a specific user
+     * @param user Address of the user
+     * @return Array of all policies for the user
+     */
+    function getUserPolicies(address user) external view returns (Policy[] memory) {
+        return userPolicies[user];
+    }
+    
+    /**
+     * @dev Get all policies for all users (expensive operation, use with caution)
+     * @return Array of user addresses and their policy counts
+     */
+    function getAllUserPoliciesCount() external pure returns (address[] memory, uint256[] memory) {
+        // Note: This is a view function that requires tracking all users off-chain
+        // For production, consider using events or subgraph for efficient querying
+        revert("Use events to track all users off-chain");
     }
     
     /**

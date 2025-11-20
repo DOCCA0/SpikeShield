@@ -1,5 +1,5 @@
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
+const { ethers, upgrades } = require("hardhat");
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("InsurancePool", function () {
@@ -21,9 +21,11 @@ describe("InsurancePool", function () {
     mockUSDT = await MockUSDT.deploy();
     await mockUSDT.waitForDeployment();
 
-    // Deploy InsurancePool
+    // Deploy InsurancePool as upgradeable proxy
     const InsurancePool = await ethers.getContractFactory("InsurancePool");
-    insurancePool = await InsurancePool.deploy(await mockUSDT.getAddress());
+    insurancePool = await upgrades.deployProxy(InsurancePool, [await mockUSDT.getAddress()], {
+      initializer: 'initialize'
+    });
     await insurancePool.waitForDeployment();
 
     // Mint USDT to users for testing
@@ -128,6 +130,72 @@ describe("InsurancePool", function () {
 
       expect(await insurancePool.premiumAmount()).to.equal(newPremium);
       expect(await insurancePool.coverageAmount()).to.equal(newCoverage);
+    });
+  });
+
+  describe("Query Functions", function () {
+    beforeEach(async function () {
+      // User1 buys 2 policies
+      await mockUSDT.connect(user1).approve(await insurancePool.getAddress(), PREMIUM_AMOUNT * 2n);
+      await insurancePool.connect(user1).buyInsurance();
+      await insurancePool.connect(user1).buyInsurance();
+
+      // User2 buys 1 policy
+      await mockUSDT.connect(user2).approve(await insurancePool.getAddress(), PREMIUM_AMOUNT);
+      await insurancePool.connect(user2).buyInsurance();
+    });
+
+    it("Should get all policies for a specific user", async function () {
+      const user1Policies = await insurancePool.getUserPolicies(user1.address);
+      expect(user1Policies.length).to.equal(2);
+      
+      expect(user1Policies[0].user).to.equal(user1.address);
+      expect(user1Policies[0].premium).to.equal(PREMIUM_AMOUNT);
+      expect(user1Policies[0].active).to.be.true;
+      expect(user1Policies[0].claimed).to.be.false;
+
+      expect(user1Policies[1].user).to.equal(user1.address);
+      expect(user1Policies[1].active).to.be.true;
+    });
+
+    it("Should return empty array for user with no policies", async function () {
+      const [, , , user3] = await ethers.getSigners();
+      const user3Policies = await insurancePool.getUserPolicies(user3.address);
+      expect(user3Policies.length).to.equal(0);
+    });
+
+    it("Should get correct policy count for users", async function () {
+      expect(await insurancePool.getUserPoliciesCount(user1.address)).to.equal(2);
+      expect(await insurancePool.getUserPoliciesCount(user2.address)).to.equal(1);
+    });
+
+    it("Should revert when calling getAllUserPoliciesCount", async function () {
+      await expect(
+        insurancePool.getAllUserPoliciesCount()
+      ).to.be.revertedWith("Use events to track all users off-chain");
+    });
+  });
+
+  describe("Upgradability", function () {
+    it("Should maintain state after upgrade", async function () {
+      // Buy insurance before upgrade
+      await mockUSDT.connect(user1).approve(await insurancePool.getAddress(), PREMIUM_AMOUNT);
+      await insurancePool.connect(user1).buyInsurance();
+
+      const policiesBeforeUpgrade = await insurancePool.getUserPolicies(user1.address);
+      const poolBalanceBeforeUpgrade = await insurancePool.getPoolBalance();
+
+      // Upgrade to V2 (same contract for this test, in production would be a new version)
+      const InsurancePoolV2 = await ethers.getContractFactory("InsurancePool");
+      const upgraded = await upgrades.upgradeProxy(await insurancePool.getAddress(), InsurancePoolV2);
+
+      // Verify state is maintained
+      const policiesAfterUpgrade = await upgraded.getUserPolicies(user1.address);
+      const poolBalanceAfterUpgrade = await upgraded.getPoolBalance();
+
+      expect(policiesAfterUpgrade.length).to.equal(policiesBeforeUpgrade.length);
+      expect(policiesAfterUpgrade[0].user).to.equal(user1.address);
+      expect(poolBalanceAfterUpgrade).to.equal(poolBalanceBeforeUpgrade);
     });
   });
 });
