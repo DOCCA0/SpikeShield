@@ -63,6 +63,23 @@ export const useContract = () => {
       setUsdtContract(usdt);
 
       console.log("Wallet connected:", accounts[0]);
+      // Notify backend to upsert this user's balances and policies
+      try {
+        const apiBase = process.env.REACT_APP_API_URL || '';
+        const url = apiBase ? `${apiBase.replace(/\/$/, '')}/api/wallet/link` : '/api/wallet/link';
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: accounts[0], token: USDT_ADDRESS }),
+        }).then((res) => {
+          if (!res.ok) console.error('Wallet link API responded with', res.status);
+          else console.log('Backend wallet-link upsert triggered');
+        }).catch((err) => {
+          console.error('Failed to notify backend on wallet link', err);
+        });
+      } catch (err) {
+        console.error('Wallet link notify error:', err);
+      }
     } catch (err) {
       setError(err.message);
       console.error("Connection error:", err);
@@ -139,85 +156,7 @@ export const useContract = () => {
   };
 
   // Get user balance
-  const getBalance = async () => {
-    try {
-      if (!usdtContract || !account) return 0;
-      const balance = await usdtContract.balanceOf(account);
-      return ethers.formatUnits(balance, 6);
-    } catch (err) {
-      console.error("Balance error:", err);
-      return 0;
-    }
-  };
-
-  // Get user policies
-  const getUserPolicies = async () => {
-    try {
-      if (!insuranceContract || !account) return [];
-      
-      const count = await insuranceContract.getUserPoliciesCount(account);
-      const policies = [];
-
-      for (let i = 0; i < count; i++) {
-        const policy = await insuranceContract.getPolicy(account, i);
-        policies.push({
-          id: i,
-          premium: ethers.formatUnits(policy.premium, 6),
-          coverage: ethers.formatUnits(policy.coverageAmount, 6),
-          purchaseTime: new Date(Number(policy.purchaseTime) * 1000),
-          expiryTime: new Date(Number(policy.expiryTime) * 1000),
-          active: policy.active,
-          claimed: policy.claimed
-        });
-      }
-
-      return policies;
-    } catch (err) {
-      console.error("Get policies error:", err);
-      return [];
-    }
-  };
-
-  // Check if user has active policy
-  const hasActivePolicy = async () => {
-    try {
-      if (!insuranceContract || !account) return false;
-      return await insuranceContract.hasActivePolicy(account);
-    } catch (err) {
-      console.error("Check active policy error:", err);
-      return false;
-    }
-  };
-
-  // Listen for payout events
-  const listenForPayouts = (callback) => {
-    if (!insuranceContract || !account) return;
-
-    const filter = insuranceContract.filters.PayoutExecuted(account);
-    
-    insuranceContract.on(filter, (user, policyId, amount, event) => {
-      console.log("🎉 Payout received!", {
-        user,
-        policyId: policyId.toString(),
-        amount: ethers.formatUnits(amount, 6),
-        blockNumber: event.log.blockNumber
-      });
-      
-      if (callback) {
-        callback({
-          user,
-          policyId: Number(policyId),
-          amount: ethers.formatUnits(amount, 6),
-          blockNumber: event.log.blockNumber
-        });
-      }
-    });
-
-    // Return cleanup function
-    return () => {
-      insuranceContract.off(filter);
-    };
-  };
+  // Note: Reading user policies, balances and event subscriptions should be done server-side.
 
   // Listen to account changes
   useEffect(() => {
@@ -244,10 +183,7 @@ export const useContract = () => {
     disconnectWallet,
     buyInsurance,
     mintTestUSDT,
-    getBalance,
-    getUserPolicies,
-    hasActivePolicy,
-    listenForPayouts,
+    // getBalance and listenForPayouts removed: use backend APIs for reads/push updates
     isConnected: !!account
   };
 };

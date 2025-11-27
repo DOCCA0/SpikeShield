@@ -57,6 +57,18 @@ CREATE INDEX IF NOT EXISTS idx_payouts_user ON payouts(user_address);
 CREATE INDEX IF NOT EXISTS idx_payouts_tx_hash ON payouts(tx_hash);
 CREATE INDEX IF NOT EXISTS idx_spikes_symbol ON spikes(symbol);
 
+-- Table: balances - caches ERC20 token balances per address
+CREATE TABLE IF NOT EXISTS balances (
+    id SERIAL PRIMARY KEY,
+    token_address VARCHAR(42) NOT NULL,
+    user_address VARCHAR(42) NOT NULL,
+    balance DECIMAL(38, 18) NOT NULL,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (token_address, user_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_balances_token_user ON balances(token_address, user_address);
+
 -- Table: sync_state - tracks last synced block for event listener
 CREATE TABLE IF NOT EXISTS sync_state (
     id SERIAL PRIMARY KEY,

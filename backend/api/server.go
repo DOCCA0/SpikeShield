@@ -1,15 +1,24 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/csv"
+	"fmt"
+	"math"
+	"math/big"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"spikeshield/db"
 	"spikeshield/utils"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -55,7 +64,11 @@ func (s *Server) setupRoutes() {
 		api.GET("/prices", s.handlePrices)
 		api.GET("/payouts", s.handlePayouts)
 		api.GET("/stats", s.handleStats)
+		api.GET("/policies", s.handlePolicies)
+		api.GET("/balance", s.handleBalance)
+		api.POST("/balance/refresh", s.handleBalanceRefresh)
 		api.POST("/insert_fake_kline", s.handleInsertFakeKline)
+		api.POST("/wallet/link", s.handleWalletLink)
 	}
 }
 
@@ -111,7 +124,15 @@ func (s *Server) handlePrices(c *gin.Context) {
 func (s *Server) handlePayouts(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 
-	payouts, err := db.GetRecentPayouts(limit)
+	user := c.Query("user")
+	var (
+		payouts []*db.Payout
+		err     error
+	)
+
+	// Use unified GetRecentPayouts which accepts an optional user filter
+	payouts, err = db.GetRecentPayouts(limit, user)
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payouts"})
 		return
@@ -238,4 +259,163 @@ func (s *Server) handleInsertFakeKline(c *gin.Context) {
 		"status":  "started",
 		"message": "Fake kline insertion started in background",
 	})
+}
+
+// handleBalance returns token balance from DB (indexer). Defaults to USDT if token not provided.
+func (s *Server) handleBalance(c *gin.Context) {
+	address := c.Query("address")
+	if address == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "address query parameter required"})
+		return
+	}
+
+	token := c.DefaultQuery("token", utils.AppConfig.RPC.UsdtAddress)
+
+	// Read from DB cache
+	bal, err := db.GetBalanceForUser(token, address)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusOK, gin.H{
+				"address": address,
+				"token":   token,
+				"found":   false,
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch balance"})
+		return
+	}
+
+	// Format using configured decimals if available
+	decimals := utils.AppConfig.RPC.UsdtDecimals
+	if decimals <= 0 {
+		decimals = 6
+	}
+	format := fmt.Sprintf("%%.%df", decimals)
+	formatted := fmt.Sprintf(format, bal.Balance)
+
+	c.JSON(http.StatusOK, gin.H{
+		"address":      bal.UserAddress,
+		"token":        bal.TokenAddress,
+		"balance":      formatted,
+		"last_updated": bal.LastUpdated,
+		"found":        true,
+	})
+}
+
+// handleBalanceRefresh forces an on-chain read of the token balance and upserts to DB
+func (s *Server) handleBalanceRefresh(c *gin.Context) {
+	address := c.PostForm("address")
+	if address == "" {
+		// allow query param too
+		address = c.Query("address")
+	}
+	if address == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "address required"})
+		return
+	}
+
+	token := c.DefaultQuery("token", utils.AppConfig.RPC.UsdtAddress)
+	cfg := utils.AppConfig
+	if cfg == nil || cfg.RPC.URL == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "RPC not configured"})
+		return
+	}
+
+	client, err := ethclient.Dial(cfg.RPC.URL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to connect RPC"})
+		return
+	}
+	defer client.Close()
+
+	// Use minimal ERC20 ABI
+	const erc20ABI = `[{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}]`
+	parsed, err := abi.JSON(strings.NewReader(erc20ABI))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse ABI"})
+		return
+	}
+
+	tokenAddr := common.HexToAddress(token)
+	contract := bind.NewBoundContract(tokenAddr, parsed, client, client, client)
+
+	var out []interface{}
+	if err := contract.Call(&bind.CallOpts{Context: c.Request.Context()}, &out, "balanceOf", common.HexToAddress(address)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to call balanceOf"})
+		return
+	}
+	balanceRaw := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	// Convert to human float using configured decimals
+	decimals := cfg.RPC.UsdtDecimals
+	balf := new(big.Float).SetInt(balanceRaw)
+	denom := new(big.Float).SetFloat64(math.Pow10(int(decimals)))
+	human := new(big.Float).Quo(balf, denom)
+	humanVal, _ := human.Float64()
+
+	// Upsert into DB
+	if err := db.UpsertBalance(token, address, humanVal); err != nil {
+		utils.LogError("Failed to upsert balance: %v", err)
+	}
+
+	// Format according to configured decimals
+	if cfg.RPC.UsdtDecimals <= 0 {
+		cfg.RPC.UsdtDecimals = 6
+	}
+	format := fmt.Sprintf("%%.%df", cfg.RPC.UsdtDecimals)
+	c.JSON(http.StatusOK, gin.H{
+		"address": address,
+		"token":   token,
+		"balance": fmt.Sprintf(format, humanVal),
+	})
+}
+
+// handlePolicies returns policies for a given user address
+func (s *Server) handlePolicies(c *gin.Context) {
+	address := c.Query("address")
+	if address == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "address query parameter required"})
+		return
+	}
+
+	policies, err := db.GetPoliciesForUser(address)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch policies"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"count":    len(policies),
+		"policies": policies,
+	})
+}
+
+// handleWalletLink triggers a background upsert of balances and policies for the linked wallet
+func (s *Server) handleWalletLink(c *gin.Context) {
+	var req struct {
+		Address string `json:"address"`
+		Token   string `json:"token"`
+	}
+	utils.LogInfo("wallet/link called address=%s token=%s", req.Address, req.Token)
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	if req.Address == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "address required"})
+		return
+	}
+
+	// Run upsert in background to avoid blocking client
+	go func(addr string) {
+		if err := db.UpsertForUser(utils.AppConfig, addr); err != nil {
+			utils.LogError("UpsertForUser failed for %s: %v", addr, err)
+		} else {
+			utils.LogInfo("UpsertForUser succeeded for %s", addr)
+		}
+	}(req.Address)
+
+	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 }

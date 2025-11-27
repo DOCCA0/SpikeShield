@@ -1,15 +1,24 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"math/big"
+	"strings"
 	"time"
 
+	"spikeshield/contracts"
 	"spikeshield/utils"
 
+	_ "github.com/lib/pq"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 var DB *sql.DB
@@ -69,6 +78,15 @@ type Payout struct {
 	SpikeID     int
 	TxHash      string
 	ExecutedAt  time.Time
+}
+
+// Balance represents an ERC20 token balance cached in DB
+type Balance struct {
+	ID           int
+	TokenAddress string
+	UserAddress  string
+	Balance      float64
+	LastUpdated  time.Time
 }
 
 // Connect establishes database connection
@@ -135,24 +153,8 @@ func GetLatestPrice(symbol string) (*PriceData, error) {
 
 // GetAllPrices retrieves prices within a time range
 func GetAllPrices(symbol string) ([]*PriceData, error) {
-	query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
-			  FROM prices WHERE symbol = $1 ORDER BY timestamp`
-
-	rows, err := DB.Query(query, symbol)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var prices []*PriceData
-	for rows.Next() {
-		p := &PriceData{}
-		if err := rows.Scan(&p.ID, &p.Timestamp, &p.Symbol, &p.Open, &p.High, &p.Low, &p.Close, &p.Volume); err != nil {
-			return nil, err
-		}
-		prices = append(prices, p)
-	}
-	return prices, nil
+	// wrapper to unified GetPrices implementation (no limit => all)
+	return GetPrices(symbol, 0)
 }
 
 // GetActivePolicies retrieves all active policies
@@ -175,6 +177,76 @@ func GetActivePolicies() ([]*Policy, error) {
 		policies = append(policies, p)
 	}
 	return policies, nil
+}
+
+// GetPoliciesForUser retrieves policies for a specific user address
+func GetPoliciesForUser(userAddr string) ([]*Policy, error) {
+	lowerUser := strings.ToLower(userAddr)
+	query := `SELECT id, user_address, premium, coverage_amount, purchase_time, expiry_time, status, COALESCE(tx_hash, '') 
+			  FROM policies WHERE LOWER(user_address) = $1 ORDER BY id DESC`
+
+	rows, err := DB.Query(query, lowerUser)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var policies []*Policy
+	for rows.Next() {
+		p := &Policy{}
+		if err := rows.Scan(&p.ID, &p.UserAddress, &p.Premium, &p.CoverageAmount, &p.PurchaseTime, &p.ExpiryTime, &p.Status, &p.TxHash); err != nil {
+			return nil, err
+		}
+		p.UserAddress = strings.ToLower(p.UserAddress)
+		policies = append(policies, p)
+	}
+	return policies, nil
+}
+
+// GetBalanceForUser returns the cached balance for a token and user
+func GetBalanceForUser(tokenAddr string, userAddr string) (*Balance, error) {
+	token := strings.ToLower(tokenAddr)
+	user := strings.ToLower(userAddr)
+
+	query := `SELECT id, token_address, user_address, balance, last_updated FROM balances WHERE LOWER(token_address) = $1 AND LOWER(user_address) = $2 LIMIT 1`
+
+	b := &Balance{}
+	err := DB.QueryRow(query, token, user).Scan(&b.ID, &b.TokenAddress, &b.UserAddress, &b.Balance, &b.LastUpdated)
+	if err != nil {
+		return nil, err
+	}
+
+	b.TokenAddress = strings.ToLower(b.TokenAddress)
+	b.UserAddress = strings.ToLower(b.UserAddress)
+	return b, nil
+}
+
+// UpsertBalance inserts or updates the balance for a token/user
+func UpsertBalance(tokenAddr string, userAddr string, balance float64) error {
+	token := strings.ToLower(tokenAddr)
+	user := strings.ToLower(userAddr)
+
+	query := `INSERT INTO balances (token_address, user_address, balance, last_updated)
+			  VALUES ($1, $2, $3, NOW())
+			  ON CONFLICT (token_address, user_address)
+			  DO UPDATE SET balance = EXCLUDED.balance, last_updated = NOW()`
+	_, err := DB.Exec(query, token, user, balance)
+	return err
+}
+
+// UpdateBalanceDelta adds delta to existing balance (creates row if not exists)
+func UpdateBalanceDelta(tokenAddr string, userAddr string, delta float64) error {
+	// Normalize addresses to lower-case to avoid case-variance duplicates
+	token := strings.ToLower(tokenAddr)
+	user := strings.ToLower(userAddr)
+
+	// Use SQL upsert to increment existing balance or insert new
+	query := `INSERT INTO balances (token_address, user_address, balance, last_updated)
+			  VALUES ($1, $2, $3, NOW())
+			  ON CONFLICT (token_address, user_address)
+			  DO UPDATE SET balance = balances.balance + $3, last_updated = NOW()`
+	_, err := DB.Exec(query, token, user, delta)
+	return err
 }
 
 // InsertPayout records a payout execution
@@ -226,15 +298,12 @@ func GetRecentSpikes(limit int) ([]*Spike, error) {
 
 // GetRecentPrices retrieves recent price data
 func GetRecentPrices(symbol string, limit int) ([]*PriceData, error) {
-	query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
-			  FROM prices WHERE symbol = $1 ORDER BY timestamp DESC LIMIT $2`
+	// wrapper to unified GetPrices implementation
+	return GetPrices(symbol, limit)
+}
 
-	rows, err := DB.Query(query, symbol, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
+// helper: scan rows into []*PriceData
+func scanPriceRows(rows *sql.Rows) ([]*PriceData, error) {
 	var prices []*PriceData
 	for rows.Next() {
 		p := &PriceData{}
@@ -246,26 +315,65 @@ func GetRecentPrices(symbol string, limit int) ([]*PriceData, error) {
 	return prices, nil
 }
 
-// GetRecentPayouts retrieves recent payout records
-func GetRecentPayouts(limit int) ([]*Payout, error) {
-	query := `SELECT id, policy_id, user_address, amount, spike_id, COALESCE(tx_hash, ''), executed_at 
-			  FROM payouts ORDER BY executed_at DESC LIMIT $1`
+// GetPrices returns prices for a symbol. If limit <= 0 all rows are returned (ordered asc), otherwise returns latest `limit` rows.
+func GetPrices(symbol string, limit int) ([]*PriceData, error) {
+	if limit > 0 {
+		query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
+				  FROM prices WHERE symbol = $1 ORDER BY timestamp DESC LIMIT $2`
+		rows, err := DB.Query(query, symbol, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanPriceRows(rows)
+	}
 
-	rows, err := DB.Query(query, limit)
+	query := `SELECT id, timestamp, symbol, open, high, low, close, volume 
+			  FROM prices WHERE symbol = $1 ORDER BY timestamp`
+	rows, err := DB.Query(query, symbol)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanPriceRows(rows)
+}
 
+// helper: scan rows into []*Payout
+func scanPayoutRows(rows *sql.Rows) ([]*Payout, error) {
 	var payouts []*Payout
 	for rows.Next() {
 		p := &Payout{}
 		if err := rows.Scan(&p.ID, &p.PolicyID, &p.UserAddress, &p.Amount, &p.SpikeID, &p.TxHash, &p.ExecutedAt); err != nil {
 			return nil, err
 		}
+		p.UserAddress = strings.ToLower(p.UserAddress)
 		payouts = append(payouts, p)
 	}
 	return payouts, nil
+}
+
+// GetRecentPayouts retrieves recent payout records. If userAddress is non-empty it filters by that user.
+func GetRecentPayouts(limit int, userAddress string) ([]*Payout, error) {
+	if userAddress == "" {
+		query := `SELECT id, policy_id, user_address, amount, spike_id, COALESCE(tx_hash, ''), executed_at 
+				  FROM payouts ORDER BY executed_at DESC LIMIT $1`
+		rows, err := DB.Query(query, limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanPayoutRows(rows)
+	}
+
+	lowerUser := strings.ToLower(userAddress)
+	query := `SELECT id, policy_id, user_address, amount, spike_id, COALESCE(tx_hash, ''), executed_at 
+			  FROM payouts WHERE LOWER(user_address) = $1 ORDER BY executed_at DESC LIMIT $2`
+	rows, err := DB.Query(query, lowerUser, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPayoutRows(rows)
 }
 
 // SystemStats represents system statistics
@@ -395,21 +503,6 @@ func InsertPayoutFromEvent(userAddr common.Address, policyID *big.Int, amount *b
 	return err
 }
 
-// GetActivePolicyIDForUser retrieves the most recent active policy ID for a user
-func GetActivePolicyIDForUser(userAddr common.Address) (int, error) {
-	var dbPolicyId int
-	query := `
-		SELECT id FROM policies
-		WHERE user_address = $1 AND status = 'active'
-		ORDER BY id DESC LIMIT 1
-	`
-	err := DB.QueryRow(query, userAddr.Hex()).Scan(&dbPolicyId)
-	if err != nil {
-		return 0, err
-	}
-	return dbPolicyId, nil
-}
-
 // GetLastSyncedBlock retrieves the last synced block number for a contract
 func GetLastSyncedBlock(contractAddr common.Address) (uint64, error) {
 	var lastBlock uint64
@@ -435,4 +528,258 @@ func UpdateLastSyncedBlock(contractAddr common.Address, blockNumber uint64) erro
 
 	_, err := DB.Exec(query, contractAddr.Hex(), blockNumber)
 	return err
+}
+
+// GetAllBalances retrieves all rows from balances table
+func GetAllBalances() ([]*Balance, error) {
+	query := `SELECT id, token_address, user_address, balance, last_updated FROM balances`
+
+	rows, err := DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var balances []*Balance
+	for rows.Next() {
+		b := &Balance{}
+		if err := rows.Scan(&b.ID, &b.TokenAddress, &b.UserAddress, &b.Balance, &b.LastUpdated); err != nil {
+			return nil, err
+		}
+		balances = append(balances, b)
+	}
+	return balances, nil
+}
+
+// GetDistinctPolicyUsers returns a list of distinct user addresses found in policies table
+func GetDistinctPolicyUsers() ([]string, error) {
+	query := `SELECT DISTINCT user_address FROM policies`
+
+	rows, err := DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+// UpsertPolicy inserts or updates a policy record based on user_address + purchase_time
+func UpsertPolicy(userAddr string, premium float64, coverage float64, purchaseTime time.Time, expiryTime time.Time, status string) error {
+	query := `
+		INSERT INTO policies (user_address, premium, coverage_amount, purchase_time, expiry_time, status, tx_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (user_address, purchase_time)
+		DO UPDATE SET premium = EXCLUDED.premium, coverage_amount = EXCLUDED.coverage_amount, expiry_time = EXCLUDED.expiry_time, status = EXCLUDED.status
+	`
+	lowerUser := strings.ToLower(userAddr)
+	_, err := DB.Exec(query, lowerUser, premium, coverage, purchaseTime, expiryTime, status, "")
+	return err
+}
+
+// FullSync updates balances and policies for all rows found in the DB.
+// This was previously in a separate syncer package; moved here per request.
+func FullSync(cfg *utils.Config) error {
+	if cfg == nil || cfg.RPC.URL == "" {
+		utils.LogInfo("RPC not configured; skipping full sync")
+		return nil
+	}
+
+	client, err := ethclient.Dial(cfg.RPC.URL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to RPC: %w", err)
+	}
+	defer client.Close()
+
+	// Update balances for every row in balances table
+	balances, err := GetAllBalances()
+	if err != nil {
+		utils.LogError("Failed to query balances for full sync: %v", err)
+	} else {
+		utils.LogInfo("FullSync: updating %d balance rows", len(balances))
+		for _, b := range balances {
+			if err := updateBalanceRow(client, cfg, b.TokenAddress, b.UserAddress); err != nil {
+				utils.LogError("Failed to update balance for %s %s: %v", b.UserAddress, b.TokenAddress, err)
+			}
+		}
+	}
+
+	// Update policies for every distinct user in policies table
+	users, err := GetDistinctPolicyUsers()
+	if err != nil {
+		utils.LogError("Failed to query policy users for full sync: %v", err)
+	} else {
+		utils.LogInfo("FullSync: updating policies for %d users", len(users))
+		for _, u := range users {
+			if err := syncPoliciesForUser(client, cfg, u); err != nil {
+				utils.LogError("Failed to sync policies for user %s: %v", u, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// UpsertForUser updates balances and policies for a single user (called when frontend links wallet)
+func UpsertForUser(cfg *utils.Config, userAddr string) error {
+	if cfg == nil || cfg.RPC.URL == "" {
+		utils.LogInfo("RPC not configured; skipping user upsert")
+		return nil
+	}
+
+	client, err := ethclient.Dial(cfg.RPC.URL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to RPC: %w", err)
+	}
+	defer client.Close()
+
+	// Update balances for token(s) present in DB for this user
+	balances, err := GetAllBalances()
+	if err != nil {
+		utils.LogError("Failed to query balances for user upsert: %v", err)
+	} else {
+		for _, b := range balances {
+			if strings.EqualFold(b.UserAddress, userAddr) {
+				if err := updateBalanceRow(client, cfg, b.TokenAddress, b.UserAddress); err != nil {
+					utils.LogError("Failed to update balance for %s %s: %v", b.UserAddress, b.TokenAddress, err)
+				}
+			}
+		}
+	}
+
+	// Update policies for this user
+	if err := syncPoliciesForUser(client, cfg, userAddr); err != nil {
+		utils.LogError("Failed to sync policies for user %s: %v", userAddr, err)
+		return err
+	}
+
+	return nil
+}
+
+// updateBalanceRow reads on-chain ERC20 balance and upserts into DB
+func updateBalanceRow(client *ethclient.Client, cfg *utils.Config, tokenAddr string, userAddr string) error {
+	const erc20ABI = `[{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}]`
+
+	parsed, err := abi.JSON(strings.NewReader(erc20ABI))
+	if err != nil {
+		return err
+	}
+
+	contract := bind.NewBoundContract(common.HexToAddress(tokenAddr), parsed, client, client, client)
+	var out []interface{}
+	if err := contract.Call(&bind.CallOpts{Context: context.Background()}, &out, "balanceOf", common.HexToAddress(userAddr)); err != nil {
+		return err
+	}
+
+	balanceRaw := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	decimals := cfg.RPC.UsdtDecimals
+	if decimals <= 0 {
+		decimals = 6
+	}
+
+	denom := new(big.Float).SetFloat64(math.Pow10(int(decimals)))
+	balf := new(big.Float).SetInt(balanceRaw)
+	human := new(big.Float).Quo(balf, denom)
+	humanVal, _ := human.Float64()
+
+	if err := UpsertBalance(tokenAddr, userAddr, humanVal); err != nil {
+		return err
+	}
+	return nil
+}
+
+// UpsertBalanceFromChain reads on-chain ERC20 balance for the given token and user using the provided
+// ethclient.Client and configuration, then upserts the normalized balance into the DB.
+// This exported wrapper lets other packages refresh a single user's balance for a token
+// by querying the chain instead of relying on transfer deltas.
+func UpsertBalanceFromChain(client *ethclient.Client, cfg *utils.Config, tokenAddr string, userAddr string) error {
+	return updateBalanceRow(client, cfg, tokenAddr, userAddr)
+}
+
+// syncPoliciesForUser reads user's policies on-chain and upserts into DB
+func syncPoliciesForUser(client *ethclient.Client, cfg *utils.Config, userAddr string) error {
+	parsed, err := abi.JSON(strings.NewReader(contracts.InsurancePoolABI))
+	if err != nil {
+		return err
+	}
+
+	poolAddr := common.HexToAddress(cfg.RPC.ContractAddress)
+	contract := bind.NewBoundContract(poolAddr, parsed, client, client, client)
+
+	// Get count
+	var out []interface{}
+	if err := contract.Call(&bind.CallOpts{Context: context.Background()}, &out, "getUserPoliciesCount", common.HexToAddress(userAddr)); err != nil {
+		return err
+	}
+	count := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
+
+	decimals := cfg.RPC.UsdtDecimals
+	if decimals <= 0 {
+		decimals = 6
+	}
+
+	for i := int64(0); i < count.Int64(); i++ {
+		var outPolicy []interface{}
+		if err := contract.Call(&bind.CallOpts{Context: context.Background()}, &outPolicy, "getPolicy", common.HexToAddress(userAddr), big.NewInt(i)); err != nil {
+			utils.LogError("getPolicy call failed for user %s index %d: %v", userAddr, i, err)
+			continue
+		}
+
+		if len(outPolicy) == 0 {
+			continue
+		}
+
+		// The ABI returns a single tuple for getPolicy; extract elements from the tuple
+		var tuple []interface{}
+		if t, ok := outPolicy[0].([]interface{}); ok {
+			tuple = t
+		} else {
+			// sometimes the call returns a flat list
+			tuple = outPolicy
+		}
+
+		if len(tuple) < 7 {
+			utils.LogError("unexpected policy tuple size for user %s: %d", userAddr, len(tuple))
+			continue
+		}
+
+		userAddrOnChain := *abi.ConvertType(tuple[0], new(common.Address)).(*common.Address)
+		premiumRaw := *abi.ConvertType(tuple[1], new(*big.Int)).(**big.Int)
+		coverageRaw := *abi.ConvertType(tuple[2], new(*big.Int)).(**big.Int)
+		purchaseRaw := *abi.ConvertType(tuple[3], new(*big.Int)).(**big.Int)
+		expiryRaw := *abi.ConvertType(tuple[4], new(*big.Int)).(**big.Int)
+		active := *abi.ConvertType(tuple[5], new(bool)).(*bool)
+		claimed := *abi.ConvertType(tuple[6], new(bool)).(*bool)
+
+		premiumFloat := new(big.Float).Quo(new(big.Float).SetInt(premiumRaw), new(big.Float).SetFloat64(math.Pow10(int(decimals))))
+		premiumVal, _ := premiumFloat.Float64()
+		coverageFloat := new(big.Float).Quo(new(big.Float).SetInt(coverageRaw), new(big.Float).SetFloat64(math.Pow10(int(decimals))))
+		coverageVal, _ := coverageFloat.Float64()
+
+		purchaseTime := time.Unix(purchaseRaw.Int64(), 0)
+		expiryTime := time.Unix(expiryRaw.Int64(), 0)
+
+		status := "inactive"
+		if active {
+			status = "active"
+		}
+		if claimed {
+			status = "claimed"
+		}
+
+		if err := UpsertPolicy(userAddrOnChain.Hex(), premiumVal, coverageVal, purchaseTime, expiryTime, status); err != nil {
+			utils.LogError("UpsertPolicy failed for user %s: %v", userAddrOnChain.Hex(), err)
+		}
+	}
+
+	return nil
 }

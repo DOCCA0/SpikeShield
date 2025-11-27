@@ -23,6 +23,8 @@ type Config struct {
 		URL             string `yaml:"url"`
 		ContractAddress string `yaml:"contract_address"`
 		PrivateKey      string `yaml:"private_key"`
+		UsdtAddress     string `yaml:"usdt_address"`
+		UsdtDecimals    int    `yaml:"usdt_decimals"`
 	} `yaml:"rpc"`
 
 	Detector struct {

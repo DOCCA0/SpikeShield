@@ -1,41 +1,66 @@
 import React, { useEffect, useState } from 'react';
 import { useContract } from '../hooks/useContract';
+import { apiService } from '../services/api';
 
 /**
  * PayoutNotification component
  * Listens for payout events and displays notifications when user receives payouts
  */
 const PayoutNotification = () => {
-  const { listenForPayouts, isConnected } = useContract();
+  const { account, isConnected } = useContract();
   const [payouts, setPayouts] = useState([]);
 
   useEffect(() => {
-    if (!isConnected) return;
+    if (!isConnected || !account) return;
 
-    // Listen for payout events
-    const unsubscribe = listenForPayouts((payoutData) => {
-      // Add new payout to the list
-      setPayouts(prev => [payoutData, ...prev]);
+    let mounted = true;
 
-      // Show browser notification if permitted
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('💰 Insurance Payout Received!', {
-          body: `You received ${payoutData.amount} USDT for policy #${payoutData.policyId}`,
-          icon: '/logo192.png'
+    const fetchPayouts = async () => {
+      try {
+        const resp = await apiService.getPayouts(10, account);
+        const items = resp?.payouts || [];
+        if (!mounted) return;
+
+        // Prepend new items that are not in the current list
+        setPayouts(prev => {
+          const existing = new Set(prev.map(p => p.tx_hash || p.TxHash));
+          const newOnes = items.filter(i => !existing.has(i.tx_hash || i.TxHash));
+          const normalized = newOnes.map(i => ({
+            txHash: i.tx_hash || i.TxHash || '',
+            amount: i.amount || i.Amount || 0,
+            policyId: i.policy_id || i.PolicyID || 0,
+            blockNumber: i.block_number || i.executed_at || ''
+          }));
+          // Show notifications for new items
+          normalized.forEach(payoutData => {
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('💰 Insurance Payout Received!', {
+                body: `You received ${payoutData.amount} USDT for policy #${payoutData.policyId}`,
+                icon: '/logo192.png'
+              });
+            }
+          });
+          return [...normalized, ...prev];
         });
+      } catch (err) {
+        console.error('Failed to fetch payouts for user:', err);
       }
-    });
+    };
 
-    // Request notification permission
+    // Initial fetch and polling
+    fetchPayouts();
+    const iv = setInterval(fetchPayouts, 10000);
+
+    // Request notification permission (once)
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
 
-    // Cleanup listener on unmount
     return () => {
-      if (unsubscribe) unsubscribe();
+      mounted = false;
+      clearInterval(iv);
     };
-  }, [isConnected, listenForPayouts]);
+  }, [isConnected, account]);
 
   if (!isConnected || payouts.length === 0) return null;
 

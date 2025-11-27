@@ -13,9 +13,6 @@ function App() {
     disconnectWallet,
     buyInsurance,
     mintTestUSDT,
-    getBalance,
-    getUserPolicies,
-    hasActivePolicy,
     isConnected
   } = useContract();
 
@@ -73,14 +70,29 @@ function App() {
     
     setRefreshing(true);
     try {
-      const [bal, pols, active] = await Promise.all([
-        getBalance(),
-        getUserPolicies(),
-        hasActivePolicy()
+      // Read balance and policies from backend API (no direct chain reads in frontend)
+      const [balResp, polsResp] = await Promise.all([
+        apiService.getUserBalance(account),
+        apiService.getUserPolicies(account)
       ]);
-      setBalance(bal);
-      setPolicies(pols);
-      setHasActive(active);
+
+      setBalance(balResp?.balance ?? '0');
+
+      const rawPolicies = polsResp?.policies || [];
+      const mapped = rawPolicies.map((p, idx) => ({
+        id: p.ID ?? p.id ?? idx,
+        premium: (p.Premium ?? p.premium ?? 0).toString(),
+        coverage: p.CoverageAmount ?? p.coverage ?? p.coverage_amount ?? 0,
+        purchaseTime: new Date(p.PurchaseTime ?? p.purchase_time ?? p.purchaseTime),
+        expiryTime: new Date(p.ExpiryTime ?? p.expiry_time ?? p.expiryTime),
+        active: (p.Status ?? p.status) === 'active',
+        claimed: (p.Status ?? p.status) === 'claimed'
+      }));
+
+      setPolicies(mapped);
+
+      const activeFlag = mapped.some(pol => pol.active && pol.expiryTime > new Date());
+      setHasActive(activeFlag);
       
       // Also refresh backend data
       if (apiStatus === 'online') {
@@ -93,10 +105,21 @@ function App() {
     }
   };
 
-  // Auto refresh when connected
+  // Auto refresh when connected + link wallet
   useEffect(() => {
-    if (isConnected) {
-      refreshData();
+    if (isConnected && account) {
+      const initWalletData = async () => {
+        try {
+          // Link wallet to trigger backend sync
+          await apiService.linkWallet(account);
+          console.log('Wallet linked successfully');
+          // Then refresh data
+          await refreshData();
+        } catch (err) {
+          console.error('Wallet initialization failed:', err);
+        }
+      };
+      initWalletData();
     }
   }, [isConnected, account]);
 

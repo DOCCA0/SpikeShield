@@ -44,6 +44,16 @@ func main() {
 	// Initialize insert notification channel
 	db.InitNotifier()
 
+	// Kick off a background full-sync (update balances & policies for DB users)
+	go func() {
+		utils.LogInfo("Starting full DB -> on-chain sync (background)...")
+		if err := db.FullSync(config); err != nil {
+			utils.LogError("Full sync failed: %v", err)
+		} else {
+			utils.LogInfo("Full sync completed")
+		}
+	}()
+
 	// Start API server in background
 	apiServer := api.NewServer(":" + *apiPort)
 	go func() {
@@ -52,25 +62,58 @@ func main() {
 		}
 	}()
 
-	// Start event listener in background if enabled
-	var listener *eventlistener.EventListener
+	// Start event and token listeners in background if enabled
 	if config.EventListener.Enabled {
 		pollInterval := time.Duration(config.EventListener.PollInterval) * time.Second
-		listener, err = eventlistener.NewEventListener(config.RPC.URL, config.RPC.ContractAddress, pollInterval)
+
+		// Small interface so we can treat different listeners uniformly
+		type managedListener interface {
+			Start(ctx context.Context) error
+			Close()
+		}
+
+		var managed []managedListener
+
+		// Shared context for all listeners so shutdown cancels them together
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Create and start event listener
+		evListener, err := eventlistener.NewEventListener(config.RPC.URL, config.RPC.ContractAddress, pollInterval)
 		if err != nil {
 			utils.LogError("Failed to create event listener: %v", err)
 		} else {
 			utils.LogInfo("Starting event listener (poll interval: %ds)", config.EventListener.PollInterval)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
+			managed = append(managed, evListener)
 			go func() {
-				if err := listener.Start(ctx); err != nil && err != context.Canceled {
+				if err := evListener.Start(ctx); err != nil && err != context.Canceled {
 					utils.LogError("Event listener error: %v", err)
 				}
 			}()
-			defer listener.Close()
 		}
+
+		// Create and start token listener for USDT independently (same importance)
+		if config.RPC.UsdtAddress != "" {
+			tokenListener, err := eventlistener.NewTokenListener(config.RPC.URL, config.RPC.UsdtAddress, pollInterval, config.RPC.UsdtDecimals)
+			if err != nil {
+				utils.LogError("Failed to create token listener: %v", err)
+			} else {
+				utils.LogInfo("Starting token listener for USDT (poll interval: %ds)", config.EventListener.PollInterval)
+				managed = append(managed, tokenListener)
+				go func() {
+					if err := tokenListener.Start(ctx); err != nil && err != context.Canceled {
+						utils.LogError("Token listener error: %v", err)
+					}
+				}()
+			}
+		}
+
+		// Ensure all listeners are closed on exit
+		defer func() {
+			for _, l := range managed {
+				l.Close()
+			}
+		}()
 	}
 
 	// Create detector

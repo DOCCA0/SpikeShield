@@ -14,6 +14,9 @@ async function main() {
   const InsurancePoolV2 = await ethers.getContractFactory("InsurancePool");
   
   console.log("Preparing upgrade...");
+  await upgrades.forceImport(PROXY_ADDRESS, InsurancePoolV2, { kind: 'transparent' });
+  console.log('forceImport done, manifest updated');
+
   const upgraded = await upgrades.upgradeProxy(PROXY_ADDRESS, InsurancePoolV2);
   await upgraded.waitForDeployment();
   

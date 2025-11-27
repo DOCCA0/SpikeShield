@@ -9,6 +9,8 @@ rpc:
   url: https://ethereum-sepolia-rpc.publicnode.com
   contract_address: "0xb2C5582d7a782A6bA79b2751E9cE3c0dA3F4BeA5"
   private_key: "${PRIVATE_KEY}"
+  usdt_address: "0xa56E945954B795c00b49D514cB53ecdC3932bC55"
+  usdt_decimals: 6
 
 detector:
   # Threshold for spike detection (minimum range as ratio of close price, 0.1 = 10%)
@@ -26,6 +28,6 @@ eventlistener:
   # Enable event listener
   enabled: true
   # Poll interval for checking new events (in seconds)
-  poll_interval: 30
+  poll_interval: 1
 
 mode: replay  # Default mode: replay or live

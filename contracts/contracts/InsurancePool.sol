@@ -144,16 +144,6 @@ contract InsurancePool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgr
     }
     
     /**
-     * @dev Get all policies for all users (expensive operation, use with caution)
-     * @return Array of user addresses and their policy counts
-     */
-    function getAllUserPoliciesCount() external pure returns (address[] memory, uint256[] memory) {
-        // Note: This is a view function that requires tracking all users off-chain
-        // For production, consider using events or subgraph for efficient querying
-        revert("Use events to track all users off-chain");
-    }
-    
-    /**
      * @dev Update oracle address
      */
     function setOracle(address _oracle) external onlyOwner {
