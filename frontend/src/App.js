@@ -111,7 +111,7 @@ function App() {
       const initWalletData = async () => {
         try {
           // Link wallet to trigger backend sync
-          await apiService.linkWallet(account);
+          await apiService.linkWallet(account, process.env.REACT_APP_USDT_ADDRESS);
           console.log('Wallet linked successfully');
           // Then refresh data
           await refreshData();

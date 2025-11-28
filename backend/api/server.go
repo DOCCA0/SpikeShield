@@ -397,13 +397,13 @@ func (s *Server) handleWalletLink(c *gin.Context) {
 		Address string `json:"address"`
 		Token   string `json:"token"`
 	}
-	utils.LogInfo("wallet/link called address=%s token=%s", req.Address, req.Token)
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
+	utils.LogInfo("wallet/link called address=%s token=%s", req.Address, req.Token)
 
-	if req.Address == "" {
+	if req.Address == "" || req.Token == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "address required"})
 		return
 	}

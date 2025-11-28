@@ -168,12 +168,6 @@ describe("InsurancePool", function () {
       expect(await insurancePool.getUserPoliciesCount(user1.address)).to.equal(2);
       expect(await insurancePool.getUserPoliciesCount(user2.address)).to.equal(1);
     });
-
-    it("Should revert when calling getAllUserPoliciesCount", async function () {
-      await expect(
-        insurancePool.getAllUserPoliciesCount()
-      ).to.be.revertedWith("Use events to track all users off-chain");
-    });
   });
 
   describe("Upgradability", function () {

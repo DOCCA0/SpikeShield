@@ -12,6 +12,7 @@ import (
 	"spikeshield/contracts"
 	"spikeshield/utils"
 
+	"github.com/bytedance/gopkg/util/logger"
 	_ "github.com/lib/pq"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -641,18 +642,9 @@ func UpsertForUser(cfg *utils.Config, userAddr string) error {
 	}
 	defer client.Close()
 
-	// Update balances for token(s) present in DB for this user
-	balances, err := GetAllBalances()
-	if err != nil {
-		utils.LogError("Failed to query balances for user upsert: %v", err)
-	} else {
-		for _, b := range balances {
-			if strings.EqualFold(b.UserAddress, userAddr) {
-				if err := updateBalanceRow(client, cfg, b.TokenAddress, b.UserAddress); err != nil {
-					utils.LogError("Failed to update balance for %s %s: %v", b.UserAddress, b.TokenAddress, err)
-				}
-			}
-		}
+	if err := updateBalanceRow(client, cfg, cfg.RPC.UsdtAddress, userAddr); err != nil {
+		utils.LogError("Failed to update balance for %s %s: %v", userAddr, cfg.RPC.UsdtAddress, err)
+		return err
 	}
 
 	// Update policies for this user
@@ -666,6 +658,7 @@ func UpsertForUser(cfg *utils.Config, userAddr string) error {
 
 // updateBalanceRow reads on-chain ERC20 balance and upserts into DB
 func updateBalanceRow(client *ethclient.Client, cfg *utils.Config, tokenAddr string, userAddr string) error {
+	logger.Info("updateBalanceRow for %s %s", userAddr, tokenAddr)
 	const erc20ABI = `[{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}]`
 
 	parsed, err := abi.JSON(strings.NewReader(erc20ABI))
@@ -748,7 +741,6 @@ func syncPoliciesForUser(client *ethclient.Client, cfg *utils.Config, userAddr s
 		}
 
 		if len(tuple) < 7 {
-			utils.LogError("unexpected policy tuple size for user %s: %d", userAddr, len(tuple))
 			continue
 		}
 

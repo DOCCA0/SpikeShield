@@ -31,8 +31,8 @@ export const useContract = () => {
   const [error, setError] = useState(null);
 
   // Replace with your deployed contract addresses
-  const INSURANCE_POOL_ADDRESS = process.env.REACT_APP_INSURANCE_POOL_ADDRESS || "0x0000000000000000000000000000000000000000";
-  const USDT_ADDRESS = process.env.REACT_APP_USDT_ADDRESS || "0x0000000000000000000000000000000000000000";
+  const INSURANCE_POOL_ADDRESS = process.env.REACT_APP_INSURANCE_POOL_ADDRESS ;
+  const USDT_ADDRESS = process.env.REACT_APP_USDT_ADDRESS;
 
   // Connect wallet
   const connectWallet = async () => {
