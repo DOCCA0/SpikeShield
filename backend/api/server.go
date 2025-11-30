@@ -250,8 +250,8 @@ func (s *Server) handleInsertFakeKline(c *gin.Context) {
 			lineCount++
 			utils.LogInfo("Inserted line %d: %s @ $%.2f", lineCount, priceData.Timestamp.Format(time.RFC3339), priceData.Close)
 
-			// Sleep 1 second before next insert
-			time.Sleep(1 * time.Second)
+			//// Sleep 1 second before next insert
+			//time.Sleep(1 * time.Second)
 		}
 	}()
 

@@ -23,15 +23,13 @@ const USDT_ABI = [
 
 export const useContract = () => {
   const [account, setAccount] = useState(null);
-  const [provider, setProvider] = useState(null);
-  const [signer, setSigner] = useState(null);
   const [insuranceContract, setInsuranceContract] = useState(null);
   const [usdtContract, setUsdtContract] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   // Replace with your deployed contract addresses
-  const INSURANCE_POOL_ADDRESS = process.env.REACT_APP_INSURANCE_POOL_ADDRESS ;
+  const INSURANCE_POOL_ADDRESS = process.env.REACT_APP_INSURANCE_POOL_ADDRESS;
   const USDT_ADDRESS = process.env.REACT_APP_USDT_ADDRESS;
 
   // Connect wallet
@@ -51,12 +49,11 @@ export const useContract = () => {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const checksummedAccount = ethers.getAddress(accounts[0]);
-      setProvider(provider);
-      setSigner(signer);
       setAccount(checksummedAccount);
 
       // Initialize contracts
       const insuranceAddress = ethers.getAddress(INSURANCE_POOL_ADDRESS);
+      console.log('insuranceAddress', insuranceAddress);
       const usdtAddress = ethers.getAddress(USDT_ADDRESS);
       const insurance = new ethers.Contract(insuranceAddress, INSURANCE_POOL_ABI, signer);
       const usdt = new ethers.Contract(usdtAddress, USDT_ABI, signer);
@@ -94,8 +91,6 @@ export const useContract = () => {
   // Disconnect wallet
   const disconnectWallet = () => {
     setAccount(null);
-    setProvider(null);
-    setSigner(null);
     setInsuranceContract(null);
     setUsdtContract(null);
   };
@@ -115,6 +110,7 @@ export const useContract = () => {
       console.log("Premium:", ethers.formatUnits(premium, 6), "USDT");
 
       // Approve USDT spending
+      const insuranceAddress = ethers.getAddress(INSURANCE_POOL_ADDRESS);
       console.log("Approving USDT...");
       const approveTx = await usdtContract.approve(insuranceAddress, premium);
       await approveTx.wait();
