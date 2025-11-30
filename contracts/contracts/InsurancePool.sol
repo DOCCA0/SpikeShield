@@ -173,4 +173,13 @@ contract InsurancePool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgr
     function getPoolBalance() external view returns (uint256) {
         return usdt.balanceOf(address(this));
     }
+    /**
+     * @dev Clear all user policies for the provided list of users (only owner)
+     * Owner must provide the list of all users who have policies.
+     */
+    function clearAllUserPolicies(address[] calldata users) external onlyOwner {
+        for (uint256 i = 0; i < users.length; i++) {
+            delete userPolicies[users[i]];
+        }
+    }
 }

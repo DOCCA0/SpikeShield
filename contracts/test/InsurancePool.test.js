@@ -15,7 +15,6 @@ describe("InsurancePool", function () {
 
   beforeEach(async function () {
     [owner, user1, user2] = await ethers.getSigners();
-
     // Deploy MockUSDT
     const MockUSDT = await ethers.getContractFactory("MockUSDT");
     mockUSDT = await MockUSDT.deploy();
@@ -190,6 +189,55 @@ describe("InsurancePool", function () {
       expect(policiesAfterUpgrade.length).to.equal(policiesBeforeUpgrade.length);
       expect(policiesAfterUpgrade[0].user).to.equal(user1.address);
       expect(poolBalanceAfterUpgrade).to.equal(poolBalanceBeforeUpgrade);
+    });
+  });
+  describe("Clear All User Policies", function () {
+    beforeEach(async function () {
+      // User1 buys 2 policies
+      await mockUSDT.connect(user1).approve(await insurancePool.getAddress(), PREMIUM_AMOUNT * 2n);
+      await insurancePool.connect(user1).buyInsurance();
+      await insurancePool.connect(user1).buyInsurance();
+
+      // User2 buys 1 policy
+      await mockUSDT.connect(user2).approve(await insurancePool.getAddress(), PREMIUM_AMOUNT);
+      await insurancePool.connect(user2).buyInsurance();
+    });
+
+    it("Should allow owner to clear policies for multiple users", async function () {
+      const users = [user1.address, user2.address];
+
+      await insurancePool.connect(owner).clearAllUserPolicies(users);
+
+      expect(await insurancePool.getUserPoliciesCount(user1.address)).to.equal(0);
+      expect(await insurancePool.getUserPoliciesCount(user2.address)).to.equal(0);
+
+      const user1Policies = await insurancePool.getUserPolicies(user1.address);
+      const user2Policies = await insurancePool.getUserPolicies(user2.address);
+      expect(user1Policies.length).to.equal(0);
+      expect(user2Policies.length).to.equal(0);
+    });
+
+    it("Should fail when non-owner calls the function", async function () {
+      const users = [user1.address];
+
+      await expect(
+        insurancePool.connect(user1).clearAllUserPolicies(users)
+      ).to.be.revertedWithCustomError(insurancePool, "OwnableUnauthorizedAccount").withArgs(user1.address);
+    });
+
+    it("Should handle empty users array", async function () {
+      await expect(
+        insurancePool.connect(owner).clearAllUserPolicies([])
+      ).not.to.be.reverted;
+    });
+
+    it("Should handle users with no policies", async function () {
+      const [, , , user3] = await ethers.getSigners();
+      const users = [user3.address];
+
+      await expect(
+        insurancePool.connect(owner).clearAllUserPolicies(users)
+      ).not.to.be.reverted;
     });
   });
 });
