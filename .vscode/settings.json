@@ -4,7 +4,8 @@
     "gopls": {
         "analyses": {
             "unusedparams": true,  // 检查未使用的参数
-            "unusedwrite": true    // 检查未使用的写入
+            "unusedwrite": true,   // 检查未使用的写入
+            "ST1000": false
         }
     },
     "editor.showUnused": true,  // 再次确认这一项必须是 true

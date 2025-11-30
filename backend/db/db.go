@@ -12,7 +12,6 @@ import (
 	"spikeshield/contracts"
 	"spikeshield/utils"
 
-	"github.com/bytedance/gopkg/util/logger"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -605,7 +604,7 @@ func UpsertForUser(cfg *utils.Config, userAddr string) error {
 
 // updateBalanceRow reads on-chain ERC20 balance and upserts into DB
 func updateBalanceRow(client *ethclient.Client, cfg *utils.Config, tokenAddr string, userAddr string) error {
-	logger.Info("updateBalanceRow for %s %s", userAddr, tokenAddr)
+	utils.LogInfo("updateBalanceRow for %s %s", userAddr, tokenAddr)
 	const erc20ABI = `[{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}]`
 
 	parsed, err := abi.JSON(strings.NewReader(erc20ABI))
