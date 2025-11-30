@@ -13,13 +13,12 @@ import (
 	"spikeshield/utils"
 
 	"github.com/bytedance/gopkg/util/logger"
-	_ "github.com/lib/pq"
-
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	_ "github.com/lib/pq"
 )
 
 var DB *sql.DB
@@ -116,8 +115,16 @@ func Connect(cfg *utils.Config) error {
 
 // InsertPrice inserts a price record
 func InsertPrice(p *PriceData) error {
-	query := `INSERT INTO prices (timestamp, symbol, open, high, low, close, volume) 
-			  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
+	query := `INSERT INTO prices (timestamp, symbol, open, high, low, close, volume)
+	          VALUES ($1, $2, $3, $4, $5, $6, $7)
+	          ON CONFLICT (timestamp, symbol)
+	          DO UPDATE SET
+		    open = EXCLUDED.open,
+		    high = EXCLUDED.high,
+		    low = EXCLUDED.low,
+		    close = EXCLUDED.close,
+		    volume = EXCLUDED.volume
+	          RETURNING id`
 	err := DB.QueryRow(query, p.Timestamp, p.Symbol, p.Open, p.High, p.Low, p.Close, p.Volume).Scan(&p.ID)
 
 	// Notify listeners that a new price was inserted
@@ -431,58 +438,6 @@ func InsertPolicyFromEvent(userAddr common.Address, premium, coverage *big.Int, 
 		expiry,
 		"active",
 		txHash.TxHash.Hex(),
-	)
-
-	return err
-}
-
-// InsertPayoutFromEvent inserts a payout execution event
-func InsertPayoutFromEvent(userAddr common.Address, policyID *big.Int, amount *big.Int, txHash types.Log) error {
-	// Convert wei to USDT (6 decimals)
-	amountFloat := new(big.Float).Quo(new(big.Float).SetInt(amount), big.NewFloat(1e6))
-	amountValue, _ := amountFloat.Float64()
-
-	// Find the most recent active policy for this user
-	var dbPolicyId int
-	policyQuery := `
-		SELECT id FROM policies
-		WHERE user_address = $1 AND status = 'active'
-		ORDER BY id DESC LIMIT 1
-	`
-	err := DB.QueryRow(policyQuery, userAddr.Hex()).Scan(&dbPolicyId)
-	if err != nil {
-		utils.LogError("Active policy not found for user %s, storing payout without policy link", userAddr.Hex())
-		dbPolicyId = 0
-	} else {
-		// Update policy status to 'claimed'
-		updateQuery := `UPDATE policies SET status = 'claimed' WHERE id = $1`
-		_, err = DB.Exec(updateQuery, dbPolicyId)
-		if err != nil {
-			utils.LogError("Failed to update policy status: %v", err)
-		}
-	}
-
-	// Insert into payouts table, ignore if tx_hash already exists to prevent duplicates
-	payoutQuery := `
-		INSERT INTO payouts
-		(policy_id, user_address, amount, tx_hash, executed_at)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (tx_hash) DO NOTHING
-	`
-
-	var policyIdPtr interface{}
-	if dbPolicyId > 0 {
-		policyIdPtr = dbPolicyId
-	} else {
-		policyIdPtr = nil
-	}
-
-	_, err = DB.Exec(payoutQuery,
-		policyIdPtr,
-		userAddr.Hex(),
-		amountValue,
-		txHash.TxHash.Hex(),
-		time.Now(),
 	)
 
 	return err

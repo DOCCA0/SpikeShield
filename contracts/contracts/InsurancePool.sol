@@ -36,7 +36,7 @@ contract InsurancePool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgr
     
     // Events
     event PolicyPurchased(address indexed user, uint256 policyId, uint256 premium, uint256 coverage, uint256 expiryTime);
-    event PayoutExecuted(address indexed user, uint256 policyId, uint256 amount);
+    event PayoutExecuted(address indexed user, uint256 policyId, uint256 spikeId, uint256 amount);
     event OracleUpdated(address indexed newOracle);
     
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -85,7 +85,7 @@ contract InsurancePool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgr
     /**
      * @dev Execute payout when spike is detected (called by backend oracle)
      */
-    function executePayout(address user, uint256 policyId) external nonReentrant {
+    function executePayout(address user, uint256 policyId, uint256 spikeId) external nonReentrant {
         require(msg.sender == oracle, "Only oracle can execute payout");
         require(policyId < userPolicies[user].length, "Invalid policy ID");
         
@@ -103,7 +103,7 @@ contract InsurancePool is Initializable, OwnableUpgradeable, ReentrancyGuardUpgr
         // Transfer payout
         require(usdt.transfer(user, policy.coverageAmount), "Payout transfer failed");
         
-        emit PayoutExecuted(user, policyId, policy.coverageAmount);
+        emit PayoutExecuted(user, policyId, spikeId, policy.coverageAmount);
     }
     
     /**

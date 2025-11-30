@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
@@ -74,9 +76,21 @@ func LogInfo(format string, args ...interface{}) {
 	log.Printf("[INFO] "+format, args...)
 }
 
-// LogError prints error level log
+// LogError prints error level log with clickable file:line in VSCode terminal
 func LogError(format string, args ...interface{}) {
-	log.Printf("[ERROR] "+format, args...)
+	_, file, line, ok := runtime.Caller(1)
+	if !ok {
+		log.Printf("[ERROR] "+format, args...)
+		return
+	}
+	// Use basename for cleaner log
+	shortFile := file
+	if lastSlash := strings.LastIndex(file, "/"); lastSlash != -1 {
+		shortFile = file[lastSlash+1:]
+	} else if lastBackslash := strings.LastIndex(file, "\\"); lastBackslash != -1 {
+		shortFile = file[lastBackslash+1:]
+	}
+	log.Printf("[ERROR] %s:%d "+format, append([]interface{}{shortFile, line}, args...)...)
 }
 
 // LogDebug prints debug level log

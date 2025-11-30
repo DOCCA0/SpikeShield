@@ -79,13 +79,13 @@ describe("InsurancePool", function () {
     it("Should execute payout for valid policy", async function () {
       const initialBalance = await mockUSDT.balanceOf(user1.address);
 
-      await insurancePool.connect(owner).executePayout(user1.address, 0);
+      await insurancePool.connect(owner).executePayout(user1.address, 0, 1);
 
       expect(await mockUSDT.balanceOf(user1.address)).to.equal(initialBalance + COVERAGE_AMOUNT);
     });
 
     it("Should mark policy as claimed", async function () {
-      await insurancePool.connect(owner).executePayout(user1.address, 0);
+      await insurancePool.connect(owner).executePayout(user1.address, 0, 1);
 
       const policy = await insurancePool.getPolicy(user1.address, 0);
       expect(policy.claimed).to.be.true;
@@ -94,7 +94,7 @@ describe("InsurancePool", function () {
 
     it("Should fail when non-oracle tries payout", async function () {
       await expect(
-        insurancePool.connect(user2).executePayout(user1.address, 0)
+        insurancePool.connect(user2).executePayout(user1.address, 0, 1)
       ).to.be.revertedWith("Only oracle can execute payout");
     });
 
@@ -102,15 +102,15 @@ describe("InsurancePool", function () {
       await time.increase(24 * 60 * 60 + 1); // Fast forward 24 hours + 1 second
 
       await expect(
-        insurancePool.connect(owner).executePayout(user1.address, 0)
+        insurancePool.connect(owner).executePayout(user1.address, 0, 1)
       ).to.be.revertedWith("Policy expired");
     });
 
     it("Should fail for already claimed policy", async function () {
-      await insurancePool.connect(owner).executePayout(user1.address, 0);
+      await insurancePool.connect(owner).executePayout(user1.address, 0, 1);
 
       await expect(
-        insurancePool.connect(owner).executePayout(user1.address, 0)
+        insurancePool.connect(owner).executePayout(user1.address, 0, 1)
       ).to.be.revertedWith("Policy not active");
     });
   });

@@ -46,6 +46,7 @@ type PolicyPurchasedEvent struct {
 // PayoutExecutedEvent represents the PayoutExecuted event from the contract
 type PayoutExecutedEvent struct {
 	PolicyId *big.Int
+	SpikeId  *big.Int
 	Amount   *big.Int
 }
 
@@ -413,11 +414,44 @@ func (el *EventListener) handlePayoutExecuted(vLog types.Log) error {
 		return fmt.Errorf("failed to unpack PayoutExecuted event: %w", err)
 	}
 
-	utils.LogInfo("💰 PayoutExecuted: user=%s, policyId=%s, amount=%s",
-		user.Hex(), event.PolicyId.String(), event.Amount.String())
+	// Convert wei to USDT (6 decimals)
+	amountFloat := new(big.Float).Quo(new(big.Float).SetInt(event.Amount), big.NewFloat(1e6))
+	amountValue, _ := amountFloat.Float64()
 
-	// Store event in database
-	return db.InsertPayoutFromEvent(user, event.PolicyId, event.Amount, vLog)
+	utils.LogInfo("💰 PayoutExecuted: user=%s, policyId=%s, spikeId=%s, amount=%s (%.2f USDT)",
+		user.Hex(), event.PolicyId.String(), event.SpikeId.String(), event.Amount.String(), amountValue)
+
+	// Find the most recent active policy for this user
+	var dbPolicyId int
+	policyQuery := `
+		SELECT id FROM policies
+		WHERE user_address = $1 AND status = 'active'
+		ORDER BY id DESC LIMIT 1
+	`
+	err = db.DB.QueryRow(policyQuery, user.Hex()).Scan(&dbPolicyId)
+	if err != nil {
+		utils.LogError("Active policy not found for user %s, storing payout without policy link: %v", user.Hex(), err)
+		dbPolicyId = 0
+	} else {
+		// Update policy status to 'claimed'
+		updateQuery := `UPDATE policies SET status = 'claimed' WHERE id = $1`
+		_, err = db.DB.Exec(updateQuery, dbPolicyId)
+		if err != nil {
+			utils.LogError("Failed to update policy status: %v", err)
+		}
+	}
+
+	// Insert payout
+	payout := &db.Payout{
+		PolicyID:    dbPolicyId,
+		UserAddress: user.Hex(),
+		Amount:      amountValue,
+		SpikeID:     int(event.SpikeId.Int64()),
+		TxHash:      vLog.TxHash.Hex(),
+		ExecutedAt:  time.Now(),
+	}
+	err = db.InsertPayout(payout)
+	return err
 }
 
 // getInsurancePoolABI returns the ABI string for the InsurancePool contract
@@ -440,6 +474,7 @@ func getInsurancePoolABI() string {
 			"inputs": [
 				{"indexed": true, "internalType": "address", "name": "user", "type": "address"},
 				{"indexed": false, "internalType": "uint256", "name": "policyId", "type": "uint256"},
+				{"indexed": false, "internalType": "uint256", "name": "spikeId", "type": "uint256"},
 				{"indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256"}
 			],
 			"name": "PayoutExecuted",
