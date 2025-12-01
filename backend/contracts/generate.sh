@@ -18,3 +18,16 @@ else
     echo "   go install github.com/ethereum/go-ethereum/cmd/abigen@latest"
     exit 1
 fi
+
+echo "Generating Go bindings for MockUSDT..."
+
+ABI_FILE_MUSDT="${CONTRACTS_DIR}/MockUSDT.sol/MockUSDT.json"
+python3 -c "import json,sys; print(json.dumps(json.load(open('$ABI_FILE_MUSDT'))['abi']))" | abigen --abi - --pkg=contracts --type=MockUSDT --out="${OUTPUT_DIR}/musdt.go"
+
+if [ $? -eq 0 ]; then
+    echo "✅ Successfully generated musdt.go"
+else
+    echo "❌ Failed to generate MockUSDT bindings. Make sure abigen is installed:"
+    echo "   go install github.com/ethereum/go-ethereum/cmd/abigen@latest"
+    exit 1
+fi

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"strings"
 	"time"
 
+	"spikeshield/contracts"
 	"spikeshield/db"
 	"spikeshield/utils"
 
@@ -58,10 +58,11 @@ func NewEventListener(rpcURL, contractAddr string, pollInterval time.Duration) (
 	}
 
 	// Parse contract ABI
-	contractABI, err := abi.JSON(strings.NewReader(getInsurancePoolABI()))
+	parsedABI, err := contracts.InsurancePoolMetaData.GetAbi()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse contract ABI: %w", err)
 	}
+	contractABI := *parsedABI
 
 	return &EventListener{
 		client:          client,
@@ -78,10 +79,11 @@ func NewTokenListener(rpcURL, tokenAddr string, pollInterval time.Duration, deci
 		return nil, fmt.Errorf("failed to connect to Ethereum client: %w", err)
 	}
 
-	contractABI, err := abi.JSON(strings.NewReader(getERC20ABI()))
+	parsedABI, err := contracts.MockUSDTMetaData.GetAbi()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse ERC20 ABI: %w", err)
 	}
+	contractABI := *parsedABI
 
 	return &TokenListener{
 		client:       client,
@@ -317,8 +319,10 @@ func (el *EventListener) processLog(vLog types.Log) error {
 
 	switch eventSignature {
 	case el.contractABI.Events["PolicyPurchased"].ID.Hex():
+		utils.LogInfo("Detected PolicyPurchased event in tx %s", vLog.TxHash.Hex())
 		return el.handlePolicyPurchased(vLog)
 	case el.contractABI.Events["PayoutExecuted"].ID.Hex():
+		utils.LogInfo("Detected PayoutExecuted event in tx %s", vLog.TxHash.Hex())
 		return el.handlePayoutExecuted(vLog)
 	default:
 		// Unknown event, skip
@@ -452,56 +456,4 @@ func (el *EventListener) handlePayoutExecuted(vLog types.Log) error {
 	}
 	err = db.InsertPayout(payout)
 	return err
-}
-
-// getInsurancePoolABI returns the ABI string for the InsurancePool contract
-func getInsurancePoolABI() string {
-	return `[
-		{
-			"anonymous": false,
-			"inputs": [
-				{"indexed": true, "internalType": "address", "name": "user", "type": "address"},
-				{"indexed": false, "internalType": "uint256", "name": "policyId", "type": "uint256"},
-				{"indexed": false, "internalType": "uint256", "name": "premium", "type": "uint256"},
-				{"indexed": false, "internalType": "uint256", "name": "coverage", "type": "uint256"},
-				{"indexed": false, "internalType": "uint256", "name": "expiryTime", "type": "uint256"}
-			],
-			"name": "PolicyPurchased",
-			"type": "event"
-		},
-		{
-			"anonymous": false,
-			"inputs": [
-				{"indexed": true, "internalType": "address", "name": "user", "type": "address"},
-				{"indexed": false, "internalType": "uint256", "name": "policyId", "type": "uint256"},
-				{"indexed": false, "internalType": "uint256", "name": "spikeId", "type": "uint256"},
-				{"indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256"}
-			],
-			"name": "PayoutExecuted",
-			"type": "event"
-		}
-	]`
-}
-
-// getERC20ABI returns minimal ERC20 ABI for Transfer event and balanceOf
-func getERC20ABI() string {
-	return `[
-		{
-			"anonymous": false,
-			"inputs": [
-				{"indexed": true, "internalType": "address", "name": "from", "type": "address"},
-				{"indexed": true, "internalType": "address", "name": "to", "type": "address"},
-				{"indexed": false, "internalType": "uint256", "name": "value", "type": "uint256"}
-			],
-			"name": "Transfer",
-			"type": "event"
-		},
-		{
-			"inputs": [{"internalType": "address", "name": "account", "type": "address"}],
-			"name": "balanceOf",
-			"outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-			"stateMutability": "view",
-			"type": "function"
-		}
-	]`
 }

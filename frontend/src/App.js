@@ -128,7 +128,7 @@ function App() {
     try {
       setSuccessMsg('');
       const txHash = await buyInsurance();
-      setSuccessMsg(`Insurance purchased successfully! Tx: ${txHash.substring(0, 10)}...`);
+      setSuccessMsg(`Insurance purchased successfully! Tx: ${txHash ? `${txHash.slice(0, 10)}...` : 'pending'}`);
       setTimeout(() => refreshData(), 2000);
     } catch (err) {
       console.error("Purchase failed:", err);
@@ -149,7 +149,7 @@ function App() {
 
   // Format date
   const formatDate = (date) => {
-    return date.toLocaleString();
+    return date ? date.toLocaleString() : 'N/A';
   };
 
   // Get policy status
@@ -188,10 +188,10 @@ function App() {
               <h2>Wallet Connected</h2>
               <div className="account-info">
                 <div className="account-address">
-                  {account.substring(0, 6)}...{account.substring(account.length - 4)}
+                  {account ? `${account.slice(0, 6)}...${account.slice(-4)}` : 'Loading...'}
                 </div>
                 <div className="balance-display">
-                  {balance} USDT
+                  {parseFloat(balance || '0').toFixed(2)} USDT
                 </div>
               </div>
               <button 
@@ -298,8 +298,6 @@ function App() {
             >
               {loading ? (
                 <span className="loading"></span>
-              ) : hasActive ? (
-                '✅ Active Policy Exists'
               ) : (
                 '🛡️ Buy Insurance (10 USDT)'
               )}
@@ -552,7 +550,7 @@ function App() {
                         {new Date(payout.executed_at).toLocaleString()}
                       </td>
                       <td style={{ padding: '12px' }}>
-                        {payout.user_address.substring(0, 6)}...{payout.user_address.substring(38)}
+                        {payout.user_address ? `${payout.user_address.slice(0, 6)}...${payout.user_address.slice(-4)}` : 'Unknown'}
                       </td>
                       <td style={{ padding: '12px', textAlign: 'right', color: '#48bb78', fontWeight: 'bold' }}>
                         ${payout.amount?.toFixed(2)}

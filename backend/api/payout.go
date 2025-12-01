@@ -154,19 +154,25 @@ func (ps *PayoutService) executeForPolicy(policy *db.Policy, spike *db.Spike) er
 	}
 
 	// Check pool balance
+	onchainPolicy, err := ps.Contract.GetPolicy(&bind.CallOpts{}, userAddr, big.NewInt(targetPolicyId))
+	if err != nil {
+		return fmt.Errorf("failed to get on-chain policy %d: %w", targetPolicyId, err)
+	}
 	poolBal, err := ps.Contract.GetPoolBalance(&bind.CallOpts{})
 	if err != nil {
 		return fmt.Errorf("failed to get pool balance: %w", err)
 	}
 
 	// Convert coverage to wei (6 decimals)
-	coverageWei := big.NewInt(int64(policy.CoverageAmount*1e6 + 0.5))
+	coverageWei := onchainPolicy.CoverageAmount
+	covUSDT := new(big.Float).Quo(new(big.Float).SetInt(coverageWei), big.NewFloat(1e6))
+	covFloat, _ := covUSDT.Float64()
 	if poolBal.Cmp(coverageWei) < 0 {
-		utils.LogError("Insufficient pool balance for user %s: %s < %s wei (%.2f USDT)", policy.UserAddress, poolBal.String(), coverageWei.String(), policy.CoverageAmount)
+		utils.LogError("Insufficient pool balance for user %s policy %d: %s < %s wei (%.2f USDT)", userAddr.Hex(), targetPolicyId, poolBal.String(), coverageWei.String(), covFloat)
 		return nil
 	}
 
-	utils.LogInfo("🚀 Calling executePayout on-chain for user %s, on-chain policy ID %d (DB %d)", policy.UserAddress, targetPolicyId, policy.ID)
+	utils.LogInfo("🚀 Calling executePayout on-chain for user %s, on-chain policy ID %d", userAddr.Hex(), targetPolicyId)
 	utils.LogInfo("   Gas Price: %s wei", gasPrice.String())
 	utils.LogInfo("   Gas Limit: %d", auth.GasLimit)
 	utils.LogInfo("   Pool balance: %s wei OK", poolBal.String())
@@ -176,6 +182,7 @@ func (ps *PayoutService) executeForPolicy(policy *db.Policy, spike *db.Spike) er
 		auth,
 		userAddr,
 		big.NewInt(targetPolicyId),
+		big.NewInt(int64(spike.ID)),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to execute payout transaction: %w", err)
@@ -200,26 +207,26 @@ func (ps *PayoutService) executeForPolicy(policy *db.Policy, spike *db.Spike) er
 	utils.LogInfo("✅ Transaction mined in block %d", receipt.BlockNumber.Uint64())
 	utils.LogInfo("   Gas Used: %d", receipt.GasUsed)
 
-	// Record payout in database (use DB policy ID)
-	payout := &db.Payout{
-		PolicyID:    policy.ID,
-		UserAddress: policy.UserAddress,
-		Amount:      policy.CoverageAmount,
-		SpikeID:     spike.ID,
-		TxHash:      tx.Hash().Hex(),
-	}
+	// // Record payout in database (use DB policy ID)
+	// payout := &db.Payout{
+	// 	PolicyID:    policy.ID,
+	// 	UserAddress: policy.UserAddress,
+	// 	Amount:      policy.CoverageAmount,
+	// 	SpikeID:     spike.ID,
+	// 	TxHash:      tx.Hash().Hex(),
+	// }
 
-	if err := db.InsertPayout(payout); err != nil {
-		return fmt.Errorf("failed to insert payout record: %w", err)
-	}
+	// if err := db.InsertPayout(payout); err != nil {
+	// 	return fmt.Errorf("failed to insert payout record: %w", err)
+	// }
 
-	// Update policy status
-	if err := db.UpdatePolicyStatus(policy.ID, "claimed"); err != nil {
-		return fmt.Errorf("failed to update policy status: %w", err)
-	}
+	// // Update policy status
+	// if err := db.UpdatePolicyStatus(policy.ID, "claimed"); err != nil {
+	// 	return fmt.Errorf("failed to update policy status: %w", err)
+	// }
 
-	utils.LogInfo("💰 Payout executed successfully for user %s: $%.2f (tx: %s, on-chain policy ID: %d)",
-		policy.UserAddress, policy.CoverageAmount, tx.Hash().Hex(), targetPolicyId)
+	utils.LogInfo("💰 Payout executed successfully for user %s policy %d: $%.2f (tx: %s)",
+		userAddr.Hex(), targetPolicyId, covFloat, tx.Hash().Hex())
 
 	return nil
 }
